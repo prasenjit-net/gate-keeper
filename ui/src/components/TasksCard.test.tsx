@@ -39,7 +39,7 @@ function renderCard() {
 
 const seedTask: Task = {
   id: 1,
-  title: "Existing task",
+  title: "Existing test case",
   done: false,
   createdAt: new Date().toISOString(),
 };
@@ -55,18 +55,18 @@ beforeEach(() => {
 describe("TasksCard", () => {
   it("lists tasks fetched on mount", async () => {
     renderCard();
-    expect(await screen.findByText("Existing task")).toBeInTheDocument();
+    expect(await screen.findByText("Existing test case")).toBeInTheDocument();
   });
 
   it("shows an empty-state message when there are no tasks", async () => {
     vi.mocked(api.listTasks).mockResolvedValue([]);
     renderCard();
-    expect(await screen.findByText("No tasks yet — add one above.")).toBeInTheDocument();
+    expect(await screen.findByText("No test cases yet. Add one above.")).toBeInTheDocument();
   });
 
   // Regression test for the double-submit bug: the submit button's
   // `disabled` attribute doesn't stop a second Enter-key form submission
-  // while the first request is still in flight. TasksCard guards this with
+    // while the first request is still in flight. TasksCard guards this with
   // a ref (set synchronously the instant mutate() is called) rather than
   // createMutation.isPending, specifically so two submits fired back to
   // back in the same tick — as these are — can't both slip through before
@@ -79,11 +79,11 @@ describe("TasksCard", () => {
     vi.mocked(api.createTask).mockReturnValue(pending);
 
     renderCard();
-    await screen.findByText("Existing task");
+    await screen.findByText("Existing test case");
 
-    const input = screen.getByPlaceholderText(/Add a task/);
+    const input = screen.getByPlaceholderText(/Add a REST test case/);
     const form = input.closest("form")!;
-    await userEvent.type(input, "New task");
+    await userEvent.type(input, "New test case");
 
     // Both fire in the same synchronous burst — the ref guard (not React
     // state) is what makes the second one a no-op regardless of exactly
@@ -97,35 +97,35 @@ describe("TasksCard", () => {
 
     resolveCreate({
       id: 2,
-      title: "New task",
+      title: "New test case",
       done: false,
       createdAt: new Date().toISOString(),
     });
 
-    expect(await screen.findByText("New task")).toBeInTheDocument();
+    expect(await screen.findByText("New test case")).toBeInTheDocument();
     // Only one insertion — not two — landed in the list.
-    expect(screen.getAllByText("New task")).toHaveLength(1);
+    expect(screen.getAllByText("New test case")).toHaveLength(1);
   });
 
   it("allows submitting again after the previous request completes", async () => {
     vi.mocked(api.createTask).mockResolvedValue({
       id: 3,
-      title: "Second task",
+      title: "Second test case",
       done: false,
       createdAt: new Date().toISOString(),
     });
 
     renderCard();
-    await screen.findByText("Existing task");
+    await screen.findByText("Existing test case");
 
-    const input = screen.getByPlaceholderText(/Add a task/);
+    const input = screen.getByPlaceholderText(/Add a REST test case/);
     const form = input.closest("form")!;
-    await userEvent.type(input, "Second task");
+    await userEvent.type(input, "Second test case");
     await act(async () => {
       fireEvent.submit(form);
     });
 
     expect(api.createTask).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText("Second task")).toBeInTheDocument();
+    expect(await screen.findByText("Second test case")).toBeInTheDocument();
   });
 });

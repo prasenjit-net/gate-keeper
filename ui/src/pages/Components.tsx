@@ -1,6 +1,6 @@
-// Example page: a gallery of every component style the theme ships,
-// plus live demos of the error-handling pipeline (backend errors →
-// toast bubbles, render crashes → error boundary).
+// Test lab: reusable interface states plus live demos of the
+// error-handling pipeline (backend errors → toast bubbles, render
+// crashes → error boundary).
 import { useState, type ReactElement, type ReactNode } from "react";
 import Badge from "../components/Badge";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -65,11 +65,11 @@ function Bomb(): ReactElement {
   throw new Error("Demo render crash — recovered by the section's ErrorBoundary");
 }
 
-const DEPLOYS = [
-  { name: "api-gateway", env: "prod", status: "Healthy", tone: "ok", latency: "38 ms", uptime: "99.99%" },
-  { name: "billing-worker", env: "prod", status: "Degraded", tone: "warn", latency: "212 ms", uptime: "99.72%" },
-  { name: "search-indexer", env: "staging", status: "Down", tone: "err", latency: "—", uptime: "97.10%" },
-  { name: "web-frontend", env: "dev", status: "Healthy", tone: "ok", latency: "51 ms", uptime: "99.95%" },
+const TEST_RUNS = [
+  { name: "GET /users/{id}", env: "prod", status: "Passed", tone: "ok", latency: "38 ms", uptime: "99.99%" },
+  { name: "POST /payments", env: "prod", status: "Flaky", tone: "warn", latency: "212 ms", uptime: "99.72%" },
+  { name: "DELETE /sessions/{id}", env: "staging", status: "Failed", tone: "err", latency: "—", uptime: "97.10%" },
+  { name: "PATCH /profiles/me", env: "dev", status: "Passed", tone: "ok", latency: "51 ms", uptime: "99.95%" },
 ] as const;
 
 const TH = "border-b border-line bg-surface-2 px-4 py-2.5 text-left font-mono text-[0.68rem] font-semibold tracking-wider text-ink-faint uppercase";
@@ -119,7 +119,7 @@ export default function ComponentsPage() {
         <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.8rem] font-medium text-ink-muted">Name</span>
-            <input className="input" placeholder="Ferris the crab" />
+            <input className="input" placeholder="GET /accounts/{id}" />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.8rem] font-medium text-ink-muted">Region</span>
@@ -152,15 +152,15 @@ export default function ComponentsPage() {
             restart.
           </Alert>
           <Alert tone="ok" icon={<IconCheckCircle size={18} />}>
-            <strong className="font-semibold">Success.</strong> The build finished in 4.2s.
+            <strong className="font-semibold">Success.</strong> The smoke suite finished in 4.2s.
           </Alert>
           <Alert tone="warn" icon={<IconAlertTriangle size={18} />}>
-            <strong className="font-semibold">Warning.</strong> The access log is growing
-            past 100 MB.
+            <strong className="font-semibold">Warning.</strong> The staging endpoint is nearing
+            its timeout budget.
           </Alert>
           <Alert tone="err" icon={<IconXCircle size={18} />}>
-            <strong className="font-semibold">Error.</strong> The database connection was
-            refused.
+            <strong className="font-semibold">Error.</strong> The assertion did not match the
+            response body.
           </Alert>
         </div>
       </Section>
@@ -170,7 +170,7 @@ export default function ComponentsPage() {
           <table className="w-full min-w-[540px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className={TH}>Service</th>
+                <th className={TH}>Test Case</th>
                 <th className={TH}>Environment</th>
                 <th className={TH}>Status</th>
                 <th className={`${TH} text-right`}>Latency</th>
@@ -178,7 +178,7 @@ export default function ComponentsPage() {
               </tr>
             </thead>
             <tbody>
-              {DEPLOYS.map((row) => (
+              {TEST_RUNS.map((row) => (
                 <tr
                   key={row.name}
                   className="border-b border-line last:border-b-0 hover:bg-surface-2"
@@ -232,7 +232,7 @@ export default function ComponentsPage() {
           </button>
           <button
             className="btn btn-secondary"
-            onClick={() => push("info", "Deploy started for web-frontend.")}
+            onClick={() => push("info", "Smoke suite started for staging.")}
           >
             <IconInfo size={16} /> Info toast
           </button>

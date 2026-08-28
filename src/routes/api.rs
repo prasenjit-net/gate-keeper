@@ -42,7 +42,7 @@ pub async fn create_task(
     Json(body): Json<NewTask>,
 ) -> AppResult<(StatusCode, Json<Task>)> {
     let task = state.tasks.create(&body.title).await?;
-    state.activity("task", format!("Task \"{}\" created", task.title));
+    state.activity("test-case", format!("Test case \"{}\" created", task.title));
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -52,7 +52,7 @@ pub async fn toggle_task(
 ) -> AppResult<Json<Task>> {
     let task = state.tasks.toggle(id).await?;
     let verb = if task.done { "completed" } else { "reopened" };
-    state.activity("task", format!("Task \"{}\" {verb}", task.title));
+    state.activity("test-case", format!("Test case \"{}\" {verb}", task.title));
     Ok(Json(task))
 }
 
@@ -61,7 +61,7 @@ pub async fn delete_task(
     Path(id): Path<u64>,
 ) -> AppResult<StatusCode> {
     let task = state.tasks.delete(id).await?;
-    state.activity("task", format!("Task \"{}\" deleted", task.title));
+    state.activity("test-case", format!("Test case \"{}\" deleted", task.title));
     Ok(StatusCode::NO_CONTENT)
 }
 

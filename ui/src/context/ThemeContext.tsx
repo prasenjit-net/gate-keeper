@@ -15,7 +15,7 @@ import { useConfig } from "./ConfigContext";
 
 export type ThemeMode = "light" | "dark" | "auto";
 
-const STORAGE_KEY = "rt-theme";
+const STORAGE_KEY = "gate-keeper-theme";
 
 interface ThemeContextValue {
   mode: ThemeMode;

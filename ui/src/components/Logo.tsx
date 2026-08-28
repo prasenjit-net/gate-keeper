@@ -1,4 +1,4 @@
-// Brand mark — the inline sibling of public/favicon.svg, drawn with
+// Brand mark, drawn with
 // theme tokens so it adapts to light/dark automatically.
 export default function Logo({ size = 32 }: { size?: number }) {
   return (

@@ -81,7 +81,7 @@ describe("Layout sidebar collapse", () => {
     await user.click(screen.getByLabelText("Toggle sidebar"));
 
     expect(sidebarNavLabel("Dashboard").className).toContain("md:hidden");
-    expect(window.localStorage.getItem("rt-sidebar")).toBe("collapsed");
+    expect(window.localStorage.getItem("gate-keeper-sidebar")).toBe("collapsed");
   });
 
   it("expands again on a second hamburger click", async () => {
@@ -93,11 +93,11 @@ describe("Layout sidebar collapse", () => {
     await user.click(screen.getByLabelText("Toggle sidebar"));
 
     expect(sidebarNavLabel("Dashboard").className).not.toContain("md:hidden");
-    expect(window.localStorage.getItem("rt-sidebar")).toBe("expanded");
+    expect(window.localStorage.getItem("gate-keeper-sidebar")).toBe("expanded");
   });
 
   it("restores a previously collapsed state on mount", async () => {
-    window.localStorage.setItem("rt-sidebar", "collapsed");
+    window.localStorage.setItem("gate-keeper-sidebar", "collapsed");
     renderLayout();
     await screen.findByLabelText("Toggle sidebar");
     expect(sidebarNavLabel("Dashboard").className).toContain("md:hidden");
@@ -117,6 +117,6 @@ describe("Layout sidebar collapse", () => {
     expect(aside.className).toContain("translate-x-0");
     // Collapse state (desktop-only concept) must be untouched by the
     // mobile drawer toggle.
-    expect(window.localStorage.getItem("rt-sidebar")).toBeNull();
+    expect(window.localStorage.getItem("gate-keeper-sidebar")).toBeNull();
   });
 });

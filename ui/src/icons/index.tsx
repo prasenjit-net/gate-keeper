@@ -1,4 +1,4 @@
-// The template's own icon pack: hand-drawn 24×24 stroke icons sharing
+// Gate Keeper's icon pack: hand-drawn 24×24 stroke icons sharing
 // one visual grammar (1.75px stroke, round caps/joins). Add icons by
 // appending another `icon(<>…</>)` — no external icon library needed.
 import type { ReactElement, ReactNode, SVGProps } from "react";

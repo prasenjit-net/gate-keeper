@@ -1,8 +1,8 @@
-// The example REST service end to end, via TanStack Query: a useQuery
-// list plus useMutation create/toggle/delete, each patching the ["tasks"]
-// cache directly on success (no full refetch). Submitting an empty title
-// intentionally reaches the server, which rejects it with a 400 —
-// demonstrating the error-bubble pipeline.
+// The example REST test-case service end to end, via TanStack Query: a
+// useQuery list plus useMutation create/toggle/delete, each patching the
+// ["tasks"] cache directly on success (no full refetch). Submitting an
+// empty title intentionally reaches the server, which rejects it with a
+// 400, demonstrating the error-bubble pipeline.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useToast } from "../context/ToastContext";
@@ -47,7 +47,7 @@ export default function TasksCard() {
       queryClient.setQueryData<Task[]>(["tasks"], (current) =>
         (current ?? []).filter((task) => task.id !== id),
       );
-      push("info", "Task deleted");
+      push("info", "Test case deleted");
     },
     onError: notifyError,
   });
@@ -77,23 +77,23 @@ export default function TasksCard() {
   return (
     <section className="card">
       <div className="card-head">
-        <h2>Tasks</h2>
-        <span className="card-hint">example REST service</span>
+        <h2>Test Cases</h2>
+        <span className="card-hint">design and execution queue</span>
       </div>
       <form className="mb-3 flex gap-2" onSubmit={add}>
         <input
           className="input"
-          placeholder="Add a task… (submit empty for a validation error)"
+          placeholder="Add a REST test case... (submit empty for a validation error)"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
         />
         <button className="btn btn-primary" disabled={createMutation.isPending} type="submit">
-          <IconPlus size={16} /> Add
+          <IconPlus size={16} /> Add case
         </button>
       </form>
       {tasks === undefined ? (
         tasksQuery.isError ? (
-          <p className="py-2 text-[0.86rem] text-err">Could not load tasks.</p>
+          <p className="py-2 text-[0.86rem] text-err">Could not load test cases.</p>
         ) : (
           <div className="flex flex-col gap-3 py-2">
             <div className="skeleton" />
@@ -102,7 +102,9 @@ export default function TasksCard() {
           </div>
         )
       ) : tasks.length === 0 ? (
-        <p className="py-2 text-[0.86rem] text-ink-faint">No tasks yet — add one above.</p>
+        <p className="py-2 text-[0.86rem] text-ink-faint">
+          No test cases yet. Add one above.
+        </p>
       ) : (
         <ul className="flex flex-col">
           {tasks.map((task) => (
@@ -117,7 +119,7 @@ export default function TasksCard() {
                     : "border-line-strong text-transparent hover:border-accent"
                 }`}
                 onClick={() => toggleMutation.mutate(task.id)}
-                aria-label={task.done ? "Reopen task" : "Complete task"}
+                aria-label={task.done ? "Reopen test case" : "Mark test case executed"}
               >
                 {task.done ? <IconCheck size={13} /> : null}
               </button>
@@ -131,7 +133,7 @@ export default function TasksCard() {
               <button
                 className="icon-btn danger"
                 onClick={() => deleteMutation.mutate(task.id)}
-                aria-label="Delete task"
+                aria-label="Delete test case"
               >
                 <IconTrash size={16} />
               </button>

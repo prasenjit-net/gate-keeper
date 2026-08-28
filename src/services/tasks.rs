@@ -21,9 +21,9 @@ pub struct NewTask {
     pub title: String,
 }
 
-/// Example service: an in-memory task list. It exists to demonstrate
+/// Example service: an in-memory test case checklist. It exists to demonstrate
 /// the REST + validation + error-handling patterns; replace the storage
-/// with a database while keeping the same interface.
+/// with persisted test case storage while keeping the same interface.
 pub struct TaskStore {
     items: RwLock<Vec<Task>>,
     next_id: AtomicU64,
@@ -32,9 +32,9 @@ pub struct TaskStore {
 impl TaskStore {
     pub fn with_examples() -> Self {
         let seed = [
-            "Read the template README",
-            "Wire up a real database",
-            "Ship something",
+            "Validate user-service happy path",
+            "Add auth header negative cases",
+            "Run staging smoke suite",
         ];
         let items: Vec<Task> = seed
             .iter()
@@ -59,11 +59,13 @@ impl TaskStore {
     pub async fn create(&self, title: &str) -> AppResult<Task> {
         let title = title.trim();
         if title.is_empty() {
-            return Err(AppError::BadRequest("task title must not be empty".into()));
+            return Err(AppError::BadRequest(
+                "test case title must not be empty".into(),
+            ));
         }
         if title.len() > 120 {
             return Err(AppError::BadRequest(
-                "task title must be 120 characters or fewer".into(),
+                "test case title must be 120 characters or fewer".into(),
             ));
         }
         let task = Task {

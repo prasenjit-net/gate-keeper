@@ -1,5 +1,5 @@
 /* =====================================================================
-   Greptile-inspired theme ("Grove") on Tailwind CSS v4.
+   Gate Keeper theme on Tailwind CSS v4.
 
    Cool light-gray canvas with a faint emerald grid, white surfaces,
    dark purple-slate ink, mint/emerald accents, and monospace meta text.
@@ -113,7 +113,7 @@
   body {
     @apply bg-canvas text-ink antialiased;
     font-size: 15px;
-    /* The Greptile-style faint emerald grid on the page canvas. */
+    /* Faint emerald grid on the page canvas. */
     background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
     background-size: 28px 28px;

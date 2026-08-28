@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
-const COLLAPSE_KEY = "rt-sidebar";
+const COLLAPSE_KEY = "gate-keeper-sidebar";
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(

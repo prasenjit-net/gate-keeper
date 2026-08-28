@@ -35,7 +35,7 @@ describe("api client", () => {
       statusText: "Bad Request",
       json: () =>
         Promise.resolve({
-          error: { code: "BAD_REQUEST", message: "task title must not be empty" },
+          error: { code: "BAD_REQUEST", message: "test case title must not be empty" },
         }),
     });
 
@@ -43,7 +43,7 @@ describe("api client", () => {
       name: "ApiError",
       code: "BAD_REQUEST",
       status: 400,
-      message: "task title must not be empty",
+      message: "test case title must not be empty",
     });
   });
 

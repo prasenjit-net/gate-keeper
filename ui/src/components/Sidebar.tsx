@@ -18,7 +18,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: <IconDashboard size={20} /> },
-  { to: "/components", label: "Components", icon: <IconLayers size={20} /> },
+  { to: "/components", label: "Test Lab", icon: <IconLayers size={20} /> },
   { to: "/settings", label: "Settings", icon: <IconSliders size={20} /> },
 ];
 

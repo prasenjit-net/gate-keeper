@@ -33,13 +33,13 @@ export default function DashboardPage() {
         />
         <StatCard
           icon={<IconActivity size={18} />}
-          label="Requests / min"
+          label="Runs / min"
           value={metrics ? formatNumber(metrics.requestsPerMin) : "—"}
-          sub={metrics ? `${formatNumber(metrics.requestsTotal)} total` : "waiting for data"}
+          sub={metrics ? `${formatNumber(metrics.requestsTotal)} total executions` : "waiting for data"}
         />
         <StatCard
           icon={<IconUsers size={18} />}
-          label="Clients online"
+          label="Active clients"
           value={metrics ? String(metrics.wsClients) : "—"}
           sub={metrics ? `server up ${formatUptime(metrics.uptimeSecs)}` : "waiting for data"}
         />
@@ -47,8 +47,8 @@ export default function DashboardPage() {
 
       <section className="card">
         <div className="card-head">
-          <h2>Live metrics</h2>
-          <span className="card-hint">pushed over WebSocket every 2 s</span>
+          <h2>Execution Metrics</h2>
+          <span className="card-hint">live runner telemetry every 2 s</span>
         </div>
         <LiveChart history={history} />
       </section>
@@ -58,7 +58,7 @@ export default function DashboardPage() {
         <section className="card">
           <div className="card-head">
             <h2>Activity</h2>
-            <span className="card-hint">server events</span>
+            <span className="card-hint">test case and runner events</span>
           </div>
           <ActivityFeed activities={activities} />
         </section>

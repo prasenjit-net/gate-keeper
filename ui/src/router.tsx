@@ -1,6 +1,6 @@
 // Code-based route tree (no file-based codegen — kept simple and fully
 // readable in one file, which matters more than convention for a small,
-// fixed set of routes in a template). `Layout` is the root route's
+// fixed set of routes). `Layout` is the root route's
 // component, so the sidebar/topbar shell wraps every page via <Outlet/>.
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import Layout from "./components/Layout";

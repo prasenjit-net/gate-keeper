@@ -5,7 +5,7 @@ import ThemeToggle from "./ThemeToggle";
 
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
-  "/components": "Components",
+  "/components": "Test Lab",
   "/settings": "Settings",
 };
 

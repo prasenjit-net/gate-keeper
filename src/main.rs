@@ -17,12 +17,12 @@ use tracing_subscriber::EnvFilter;
 use crate::config::AppConfig;
 use crate::state::AppState;
 
-/// Single-binary fullstack template: Axum REST API + embedded React SPA.
+/// HTTP REST API test case designer and executor.
 ///
 /// Configuration is read from a TOML file; every flag below overrides
 /// the corresponding value from that file.
 #[derive(Parser, Debug)]
-#[command(name = "rusty-template", version, about)]
+#[command(name = "gate-keeper", version, about)]
 struct Cli {
     /// Path to the TOML configuration file
     #[arg(short, long, default_value = "config.toml")]
