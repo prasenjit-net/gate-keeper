@@ -2,50 +2,50 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ChangeEvent } from "react";
 import Badge from "../components/Badge";
-import { EmptyState, RequestList, SAMPLE_PLAN } from "../components/HttpPlanPanels";
+import { EmptyState, RequestList, SAMPLE_PLAN } from "../components/TestPlanPanels";
 import ScriptEditor from "../components/ScriptEditor";
 import { useToast } from "../context/ToastContext";
-import { api, type HttpPlan, type SavePlanInput, type StoredPlanSummary } from "../lib/api";
+import { api, type TestPlan, type SavePlanInput, type StoredPlanSummary } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { IconPlus, IconServer, IconTrash } from "../icons";
 
-export default function HttpPlansPage() {
+export default function TestPlansPage() {
   const { push, notifyError } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [name, setName] = useState("Gate Keeper smoke plan");
   const [content, setContent] = useState(SAMPLE_PLAN);
-  const [preview, setPreview] = useState<HttpPlan | null>(null);
+  const [preview, setPreview] = useState<TestPlan | null>(null);
 
-  const plansQuery = useQuery({ queryKey: ["http-plans"], queryFn: api.listHttpPlans });
+  const plansQuery = useQuery({ queryKey: ["test-plans"], queryFn: api.listTestPlans });
 
   const previewMutation = useMutation({
-    mutationFn: (input: SavePlanInput) => api.previewHttpPlan(input),
+    mutationFn: (input: SavePlanInput) => api.previewTestPlan(input),
     onSuccess: setPreview,
     onError: notifyError,
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: SavePlanInput) => api.createHttpPlan(input),
+    mutationFn: (input: SavePlanInput) => api.createTestPlan(input),
     onSuccess: (plan) => {
-      queryClient.invalidateQueries({ queryKey: ["http-plans"] });
+      queryClient.invalidateQueries({ queryKey: ["test-plans"] });
       push("success", `Saved ${plan.name}.`);
-      navigate({ to: "/http-plans/$planId", params: { planId: plan.id } });
+      navigate({ to: "/test-plans/$planId", params: { planId: plan.id } });
     },
     onError: notifyError,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: api.deleteHttpPlan,
+    mutationFn: api.deleteTestPlan,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["http-plans"] });
-      push("info", "HTTP plan deleted.");
+      queryClient.invalidateQueries({ queryKey: ["test-plans"] });
+      push("info", "Test plan deleted.");
     },
     onError: notifyError,
   });
 
-  const input = (): SavePlanInput => ({ name: name.trim() || "Uploaded HTTP plan", content });
+  const input = (): SavePlanInput => ({ name: name.trim() || "Uploaded test plan", content });
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -120,7 +120,7 @@ export default function HttpPlansPage() {
             setContent(next);
             setPreview(null);
           }}
-          ariaLabel="HTTP plan content"
+          ariaLabel="test plan content"
           height="420px"
         />
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -163,7 +163,7 @@ function PlanList({
           <div className="flex items-start gap-2">
             <Link
               className="min-w-0 flex-1 rounded-md text-ink transition-colors hover:text-accent"
-              to="/http-plans/$planId"
+              to="/test-plans/$planId"
               params={{ planId: plan.id }}
             >
               <strong className="block truncate text-[0.95rem]">{plan.name}</strong>

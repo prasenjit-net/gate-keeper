@@ -14,7 +14,7 @@ const MAX_BODY_PREVIEW: usize = 8 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HttpPlanInput {
+pub struct TestPlanInput {
     #[serde(default)]
     pub name: Option<String>,
     pub content: String,
@@ -24,16 +24,16 @@ pub struct HttpPlanInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HttpPlan {
+pub struct TestPlan {
     pub name: String,
     pub variables: BTreeMap<String, String>,
-    pub requests: Vec<HttpPlanRequest>,
+    pub requests: Vec<TestPlanRequest>,
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HttpPlanRequest {
+pub struct TestPlanRequest {
     pub id: usize,
     pub name: String,
     pub method: String,
@@ -119,7 +119,7 @@ pub struct StoredPlan {
     pub id: String,
     pub name: String,
     pub content: String,
-    pub parsed: HttpPlan,
+    pub parsed: TestPlan,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -198,7 +198,7 @@ pub struct ExecutionQueueItem {
     pub log_path: Option<String>,
 }
 
-pub struct HttpPlanStore {
+pub struct TestPlanStore {
     data_dir: PathBuf,
     plans: RwLock<Vec<StoredPlan>>,
     executions: RwLock<Vec<ExecutionSummary>>,
@@ -206,7 +206,7 @@ pub struct HttpPlanStore {
     counter: AtomicU64,
 }
 
-impl HttpPlanStore {
+impl TestPlanStore {
     pub async fn open(data_dir: impl Into<PathBuf>) -> Self {
         let data_dir = data_dir.into();
         if let Err(err) = tokio::fs::create_dir_all(data_dir.join("plans")).await {
@@ -257,7 +257,7 @@ impl HttpPlanStore {
             .iter()
             .find(|plan| plan.id == id)
             .cloned()
-            .ok_or_else(|| AppError::NotFound(format!("HTTP plan {id} does not exist")))
+            .ok_or_else(|| AppError::NotFound(format!("test plan {id} does not exist")))
     }
 
     pub async fn create_plan(&self, input: SavePlanInput) -> AppResult<StoredPlan> {
@@ -284,7 +284,7 @@ impl HttpPlanStore {
         let plan = plans
             .iter_mut()
             .find(|plan| plan.id == id)
-            .ok_or_else(|| AppError::NotFound(format!("HTTP plan {id} does not exist")))?;
+            .ok_or_else(|| AppError::NotFound(format!("test plan {id} does not exist")))?;
         plan.name = parsed.name.clone();
         plan.content = input.content;
         plan.parsed = parsed;
@@ -299,7 +299,7 @@ impl HttpPlanStore {
         let index = plans
             .iter()
             .position(|plan| plan.id == id)
-            .ok_or_else(|| AppError::NotFound(format!("HTTP plan {id} does not exist")))?;
+            .ok_or_else(|| AppError::NotFound(format!("test plan {id} does not exist")))?;
         plans.remove(index);
         persist_plans(&self.data_dir, &plans).await
     }
@@ -520,8 +520,8 @@ impl QueueStatus {
     }
 }
 
-fn save_input_to_plan_input(input: &SavePlanInput) -> HttpPlanInput {
-    HttpPlanInput {
+fn save_input_to_plan_input(input: &SavePlanInput) -> TestPlanInput {
+    TestPlanInput {
         name: Some(input.name.clone()),
         content: input.content.clone(),
         variables: input.variables.clone(),
@@ -654,7 +654,7 @@ fn execution_log(report: &ExecutionReport) -> String {
     lines.join("\n")
 }
 
-pub fn parse(input: HttpPlanInput) -> AppResult<HttpPlan> {
+pub fn parse(input: TestPlanInput) -> AppResult<TestPlan> {
     let mut variables = BTreeMap::new();
     let mut request_blocks: Vec<Block> = Vec::new();
     let mut current = Block::default();
@@ -697,15 +697,15 @@ pub fn parse(input: HttpPlanInput) -> AppResult<HttpPlan> {
 
     if requests.is_empty() {
         return Err(AppError::BadRequest(
-            "HTTP plan does not contain any executable requests".into(),
+            "test plan does not contain any executable requests".into(),
         ));
     }
 
-    Ok(HttpPlan {
+    Ok(TestPlan {
         name: input
             .name
             .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| "Uploaded HTTP plan".into()),
+            .unwrap_or_else(|| "Uploaded test plan".into()),
         variables,
         requests,
         warnings,
@@ -713,14 +713,14 @@ pub fn parse(input: HttpPlanInput) -> AppResult<HttpPlan> {
 }
 
 #[cfg(test)]
-pub async fn execute(input: HttpPlanInput) -> AppResult<ExecutionReport> {
+pub async fn execute(input: TestPlanInput) -> AppResult<ExecutionReport> {
     let plan = parse(input)?;
     run_plan("ad-hoc", &plan, new_id("exec")).await
 }
 
 async fn run_plan(
     plan_id: &str,
-    plan: &HttpPlan,
+    plan: &TestPlan,
     execution_id: String,
 ) -> AppResult<ExecutionReport> {
     let started = Instant::now();
@@ -753,7 +753,7 @@ async fn run_plan(
     })
 }
 
-async fn execute_one(client: &reqwest::Client, request: &HttpPlanRequest) -> ExecutionResult {
+async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> ExecutionResult {
     let started = Instant::now();
     let mut assertion_results = Vec::new();
     let mut status = None;
@@ -842,7 +842,7 @@ async fn execute_one(client: &reqwest::Client, request: &HttpPlanRequest) -> Exe
 }
 
 impl ExecutionResult {
-    fn failed_before_send(request: &HttpPlanRequest, started: Instant, error: String) -> Self {
+    fn failed_before_send(request: &TestPlanRequest, started: Instant, error: String) -> Self {
         Self {
             id: request.id,
             name: request.name.clone(),
@@ -896,7 +896,7 @@ fn parse_block(
     block: Block,
     variables: &BTreeMap<String, String>,
     warnings: &mut Vec<String>,
-) -> AppResult<Option<HttpPlanRequest>> {
+) -> AppResult<Option<TestPlanRequest>> {
     let mut request_line_index = None;
     for (index, line) in block.lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -982,7 +982,7 @@ fn parse_block(
         });
     }
 
-    Ok(Some(HttpPlanRequest {
+    Ok(Some(TestPlanRequest {
         id,
         name: block.name.unwrap_or_else(|| format!("{method} {url}")),
         method,
@@ -1117,8 +1117,8 @@ mod tests {
     use axum::Json;
     use serde_json::json;
 
-    fn input(content: &str) -> HttpPlanInput {
-        HttpPlanInput {
+    fn input(content: &str) -> TestPlanInput {
+        TestPlanInput {
             name: Some("Smoke".into()),
             content: content.into(),
             variables: BTreeMap::new(),
@@ -1226,7 +1226,7 @@ GET http://{addr}/missing
             "gate-keeper-store-test-{}",
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        let store = HttpPlanStore::open(&data_dir).await;
+        let store = TestPlanStore::open(&data_dir).await;
         let plan = store
             .create_plan(SavePlanInput {
                 name: "Persisted".into(),

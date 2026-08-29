@@ -87,7 +87,7 @@ If the config file is missing, built-in defaults are used with a warning.
 
 Gate Keeper stores runtime data in the local `data/` folder:
 
-- `data/plans/index.json` contains saved HTTP plans and their parsed previews.
+- `data/plans/index.json` contains saved test plans and their parsed previews.
 - `data/executions/index.json` contains saved execution summaries.
 - `data/reports/<execution-id>.json` contains each full execution report.
 - `data/reports/<execution-id>.log` contains the plain-text execution log.
@@ -106,13 +106,13 @@ case storage and execution history.
 | GET | `/api/health` | Liveness + version |
 | GET | `/api/config` | UI bootstrap config |
 | GET | `/api/metrics` | Latest runner metrics snapshot |
-| POST | `/api/http-plans/preview` | Parse a JetBrains-style `.http` plan without executing it |
-| GET | `/api/http-plans` | List saved HTTP plans |
-| POST | `/api/http-plans` | Save a new HTTP plan |
-| GET | `/api/http-plans/{id}` | Get a saved HTTP plan detail |
-| PUT | `/api/http-plans/{id}` | Update a saved HTTP plan |
-| DELETE | `/api/http-plans/{id}` | Delete a saved HTTP plan |
-| POST | `/api/http-plans/{id}/execute` | Queue a saved HTTP plan for asynchronous execution |
+| POST | `/api/test-plans/preview` | Parse a JetBrains-style `.http` plan without executing it |
+| GET | `/api/test-plans` | List saved test plans |
+| POST | `/api/test-plans` | Save a new test plan |
+| GET | `/api/test-plans/{id}` | Get a saved test plan detail |
+| PUT | `/api/test-plans/{id}` | Update a saved test plan |
+| DELETE | `/api/test-plans/{id}` | Delete a saved test plan |
+| POST | `/api/test-plans/{id}/execute` | Queue a saved test plan for asynchronous execution |
 | GET | `/api/executions` | List saved execution reports |
 | GET | `/api/execution-queue` | List queued and running execution status |
 | GET | `/api/executions/{id}` | View a saved execution report and log |

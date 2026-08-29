@@ -13,14 +13,14 @@ import {
 import Logo from "./Logo";
 
 interface NavItem {
-  to: "/" | "/http-plans" | "/execution-queue" | "/executions" | "/components" | "/settings";
+  to: "/" | "/test-plans" | "/execution-queue" | "/executions" | "/components" | "/settings";
   label: string;
   icon: ReactElement;
 }
 
 const NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: <IconDashboard size={20} /> },
-  { to: "/http-plans", label: "HTTP Plans", icon: <IconServer size={20} /> },
+  { to: "/test-plans", label: "Test Plans", icon: <IconServer size={20} /> },
   { to: "/execution-queue", label: "Queue", icon: <IconActivity size={20} /> },
   { to: "/executions", label: "Executions", icon: <IconActivity size={20} /> },
   { to: "/components", label: "Test Lab", icon: <IconLayers size={20} /> },

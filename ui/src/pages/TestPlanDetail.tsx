@@ -1,14 +1,14 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { EmptyState, RequestList } from "../components/HttpPlanPanels";
+import { EmptyState, RequestList } from "../components/TestPlanPanels";
 import ScriptEditor from "../components/ScriptEditor";
 import { useToast } from "../context/ToastContext";
 import { api, type SavePlanInput } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { IconActivity, IconCheckCircle, IconTrash } from "../icons";
 
-export default function HttpPlanDetailPage() {
+export default function TestPlanDetailPage() {
   const { planId } = useParams({ strict: false }) as { planId: string };
   const { push, notifyError } = useToast();
   const queryClient = useQueryClient();
@@ -17,8 +17,8 @@ export default function HttpPlanDetailPage() {
   const [content, setContent] = useState("");
 
   const planQuery = useQuery({
-    queryKey: ["http-plan", planId],
-    queryFn: () => api.getHttpPlan(planId),
+    queryKey: ["test-plan", planId],
+    queryFn: () => api.getTestPlan(planId),
   });
 
   useEffect(() => {
@@ -28,17 +28,17 @@ export default function HttpPlanDetailPage() {
   }, [planQuery.data]);
 
   const updateMutation = useMutation({
-    mutationFn: (input: SavePlanInput) => api.updateHttpPlan(planId, input),
+    mutationFn: (input: SavePlanInput) => api.updateTestPlan(planId, input),
     onSuccess: (plan) => {
-      queryClient.setQueryData(["http-plan", planId], plan);
-      queryClient.invalidateQueries({ queryKey: ["http-plans"] });
+      queryClient.setQueryData(["test-plan", planId], plan);
+      queryClient.invalidateQueries({ queryKey: ["test-plans"] });
       push("success", `Updated ${plan.name}.`);
     },
     onError: notifyError,
   });
 
   const executeMutation = useMutation({
-    mutationFn: () => api.executeHttpPlan(planId),
+    mutationFn: () => api.executeTestPlan(planId),
     onSuccess: (item) => {
       queryClient.invalidateQueries({ queryKey: ["execution-queue"] });
       queryClient.invalidateQueries({ queryKey: ["executions"] });
@@ -48,23 +48,23 @@ export default function HttpPlanDetailPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteHttpPlan(planId),
+    mutationFn: () => api.deleteTestPlan(planId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["http-plans"] });
-      push("info", "HTTP plan deleted.");
-      navigate({ to: "/http-plans" });
+      queryClient.invalidateQueries({ queryKey: ["test-plans"] });
+      push("info", "Test plan deleted.");
+      navigate({ to: "/test-plans" });
     },
     onError: notifyError,
   });
 
   const save = () => {
-    updateMutation.mutate({ name: name.trim() || "Uploaded HTTP plan", content });
+    updateMutation.mutate({ name: name.trim() || "Uploaded test plan", content });
   };
 
   if (planQuery.isError) {
     return (
       <section className="card">
-        <EmptyState label="Could not load this HTTP plan." />
+        <EmptyState label="Could not load this test plan." />
       </section>
     );
   }
@@ -115,7 +115,7 @@ export default function HttpPlanDetailPage() {
         <ScriptEditor
           value={content}
           onChange={setContent}
-          ariaLabel="HTTP plan content"
+          ariaLabel="test plan content"
           height="600px"
         />
       </section>

@@ -128,12 +128,12 @@ async fn create_task_then_list_reflects_it() {
 }
 
 #[tokio::test]
-async fn preview_http_plan_returns_parsed_requests() {
+async fn preview_test_plan_returns_parsed_requests() {
     let app = test_app().await;
     let res = app
         .oneshot(json_request(
             Method::POST,
-            "/api/http-plans/preview",
+            "/api/test-plans/preview",
             serde_json::json!({
                 "name": "Smoke",
                 "content": "@host = http://127.0.0.1:8080\n\n### Health\nGET {{host}}/api/health\n",
@@ -154,13 +154,13 @@ async fn preview_http_plan_returns_parsed_requests() {
 }
 
 #[tokio::test]
-async fn http_plan_crud_persists_parsed_plan() {
+async fn test_plan_crud_persists_parsed_plan() {
     let app = test_app().await;
     let create = app
         .clone()
         .oneshot(json_request(
             Method::POST,
-            "/api/http-plans",
+            "/api/test-plans",
             serde_json::json!({
                 "name": "Smoke",
                 "content": "@host = http://127.0.0.1:8080\n\n### Health\nGET {{host}}/api/health\n",
@@ -176,7 +176,7 @@ async fn http_plan_crud_persists_parsed_plan() {
 
     let list = app
         .clone()
-        .oneshot(request(Method::GET, "/api/http-plans"))
+        .oneshot(request(Method::GET, "/api/test-plans"))
         .await
         .unwrap();
     let listed = body_json(list).await;
@@ -187,7 +187,7 @@ async fn http_plan_crud_persists_parsed_plan() {
         .clone()
         .oneshot(json_request(
             Method::PUT,
-            &format!("/api/http-plans/{id}"),
+            &format!("/api/test-plans/{id}"),
             serde_json::json!({
                 "name": "Updated",
                 "content": "### Missing\nGET http://127.0.0.1:8080/api/missing\n",
@@ -199,20 +199,20 @@ async fn http_plan_crud_persists_parsed_plan() {
     assert_eq!(body_json(update).await["name"], "Updated");
 
     let delete = app
-        .oneshot(request(Method::DELETE, &format!("/api/http-plans/{id}")))
+        .oneshot(request(Method::DELETE, &format!("/api/test-plans/{id}")))
         .await
         .unwrap();
     assert_eq!(delete.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
-async fn execute_http_plan_enqueues_a_run() {
+async fn execute_test_plan_enqueues_a_run() {
     let app = test_app().await;
     let create = app
         .clone()
         .oneshot(json_request(
             Method::POST,
-            "/api/http-plans",
+            "/api/test-plans",
             serde_json::json!({
                 "name": "Queue me",
                 "content": "### Health\nGET http://127.0.0.1:9/api/health\n",
@@ -227,7 +227,7 @@ async fn execute_http_plan_enqueues_a_run() {
         .clone()
         .oneshot(request(
             Method::POST,
-            &format!("/api/http-plans/{plan_id}/execute"),
+            &format!("/api/test-plans/{plan_id}/execute"),
         ))
         .await
         .unwrap();

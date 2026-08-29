@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import Badge from "../components/Badge";
-import { EmptyState } from "../components/HttpPlanPanels";
+import { EmptyState } from "../components/TestPlanPanels";
 import { useLive } from "../context/LiveContext";
 import { api, type ExecutionQueueItem, type QueueStatus } from "../lib/api";
 import { timeAgo } from "../lib/format";
@@ -76,7 +76,7 @@ function QueueItem({ item }: { item: ExecutionQueueItem }) {
       </div>
       {item.error ? <p className="mt-2 text-sm text-err">{item.error}</p> : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link className="btn btn-secondary btn-sm" to="/http-plans/$planId" params={{ planId: item.planId }}>
+        <Link className="btn btn-secondary btn-sm" to="/test-plans/$planId" params={{ planId: item.planId }}>
           Open plan
         </Link>
         {complete ? (

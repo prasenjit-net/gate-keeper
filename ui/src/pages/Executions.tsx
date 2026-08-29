@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Badge from "../components/Badge";
-import { EmptyState } from "../components/HttpPlanPanels";
+import { EmptyState } from "../components/TestPlanPanels";
 import { useToast } from "../context/ToastContext";
 import { api, type ExecutionSummary } from "../lib/api";
 import { timeAgo } from "../lib/format";

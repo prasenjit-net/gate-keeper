@@ -1,5 +1,5 @@
 import Badge from "./Badge";
-import type { ExecutionReport, ExecutionResult, HttpPlan, HttpPlanRequest } from "../lib/api";
+import type { ExecutionReport, ExecutionResult, TestPlan, TestPlanRequest } from "../lib/api";
 import { IconCheckCircle, IconXCircle } from "../icons";
 
 export const SAMPLE_PLAN = `@host = http://127.0.0.1:8080
@@ -32,7 +32,7 @@ export function EmptyState({ label }: { label: string }) {
   return <p className="py-3 text-[0.86rem] text-ink-faint">{label}</p>;
 }
 
-export function RequestList({ plan }: { plan: HttpPlan }) {
+export function RequestList({ plan }: { plan: TestPlan }) {
   return (
     <div className="flex flex-col gap-3">
       {plan.warnings.length > 0 ? (
@@ -51,7 +51,7 @@ export function RequestList({ plan }: { plan: HttpPlan }) {
   );
 }
 
-function RequestItem({ request }: { request: HttpPlanRequest }) {
+function RequestItem({ request }: { request: TestPlanRequest }) {
   return (
     <li className="border-b border-line py-3 last:border-b-0">
       <div className="mb-1.5 flex items-center gap-2">

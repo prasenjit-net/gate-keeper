@@ -5,7 +5,7 @@ import ThemeToggle from "./ThemeToggle";
 
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
-  "/http-plans": "HTTP Plans",
+  "/test-plans": "Test Plans",
   "/execution-queue": "Execution Queue",
   "/executions": "Executions",
   "/components": "Test Lab",
@@ -14,8 +14,8 @@ const TITLES: Record<string, string> = {
 
 export default function Topbar({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation();
-  const title = pathname.startsWith("/http-plans/")
-    ? "HTTP Plan Detail"
+  const title = pathname.startsWith("/test-plans/")
+    ? "Test Plan Detail"
     : pathname.startsWith("/executions/")
       ? "Execution Report"
       : (TITLES[pathname] ?? "Not found");

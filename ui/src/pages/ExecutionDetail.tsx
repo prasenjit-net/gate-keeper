@@ -1,7 +1,7 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Badge from "../components/Badge";
-import { EmptyState, ReportView } from "../components/HttpPlanPanels";
+import { EmptyState, ReportView } from "../components/TestPlanPanels";
 import { useToast } from "../context/ToastContext";
 import { api } from "../lib/api";
 import { IconTrash } from "../icons";
@@ -71,7 +71,7 @@ export default function ExecutionDetailPage() {
         <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
           <Link
             className="btn btn-secondary"
-            to="/http-plans/$planId"
+            to="/test-plans/$planId"
             params={{ planId: execution.planId }}
           >
             Open plan

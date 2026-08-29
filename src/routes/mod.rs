@@ -16,18 +16,18 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/health", get(api::health))
         .route("/api/config", get(api::config))
         .route("/api/metrics", get(api::metrics))
-        .route("/api/http-plans/preview", post(api::preview_http_plan))
+        .route("/api/test-plans/preview", post(api::preview_test_plan))
         .route(
-            "/api/http-plans",
-            get(api::list_http_plans).post(api::create_http_plan),
+            "/api/test-plans",
+            get(api::list_test_plans).post(api::create_test_plan),
         )
         .route(
-            "/api/http-plans/{id}",
-            get(api::get_http_plan)
-                .put(api::update_http_plan)
-                .delete(api::delete_http_plan),
+            "/api/test-plans/{id}",
+            get(api::get_test_plan)
+                .put(api::update_test_plan)
+                .delete(api::delete_test_plan),
         )
-        .route("/api/http-plans/{id}/execute", post(api::execute_http_plan))
+        .route("/api/test-plans/{id}/execute", post(api::execute_test_plan))
         .route("/api/executions", get(api::list_executions))
         .route("/api/execution-queue", get(api::list_execution_queue))
         .route(

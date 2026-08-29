@@ -32,7 +32,7 @@ export interface Task {
   createdAt: string;
 }
 
-export interface HttpPlanInput {
+export interface TestPlanInput {
   name?: string;
   content: string;
   variables?: Record<string, string>;
@@ -44,14 +44,14 @@ export interface SavePlanInput {
   variables?: Record<string, string>;
 }
 
-export interface HttpPlan {
+export interface TestPlan {
   name: string;
   variables: Record<string, string>;
-  requests: HttpPlanRequest[];
+  requests: TestPlanRequest[];
   warnings: string[];
 }
 
-export interface HttpPlanRequest {
+export interface TestPlanRequest {
   id: number;
   name: string;
   method: string;
@@ -74,7 +74,7 @@ export interface StoredPlan {
   id: string;
   name: string;
   content: string;
-  parsed: HttpPlan;
+  parsed: TestPlan;
   createdAtMs: number;
   updatedAtMs: number;
 }
@@ -213,27 +213,27 @@ export const api = {
   config: () => request<ServerConfig>("/api/config"),
   health: () => request<{ status: string; version: string }>("/api/health"),
   metrics: () => request<Metrics>("/api/metrics"),
-  previewHttpPlan: (input: HttpPlanInput) =>
-    request<HttpPlan>("/api/http-plans/preview", {
+  previewTestPlan: (input: TestPlanInput) =>
+    request<TestPlan>("/api/test-plans/preview", {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  listHttpPlans: () => request<StoredPlanSummary[]>("/api/http-plans"),
-  createHttpPlan: (input: SavePlanInput) =>
-    request<StoredPlan>("/api/http-plans", {
+  listTestPlans: () => request<StoredPlanSummary[]>("/api/test-plans"),
+  createTestPlan: (input: SavePlanInput) =>
+    request<StoredPlan>("/api/test-plans", {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  getHttpPlan: (id: string) => request<StoredPlan>(`/api/http-plans/${id}`),
-  updateHttpPlan: (id: string, input: SavePlanInput) =>
-    request<StoredPlan>(`/api/http-plans/${id}`, {
+  getTestPlan: (id: string) => request<StoredPlan>(`/api/test-plans/${id}`),
+  updateTestPlan: (id: string, input: SavePlanInput) =>
+    request<StoredPlan>(`/api/test-plans/${id}`, {
       method: "PUT",
       body: JSON.stringify(input),
     }),
-  deleteHttpPlan: (id: string) =>
-    request<void>(`/api/http-plans/${id}`, { method: "DELETE" }),
-  executeHttpPlan: (id: string) =>
-    request<ExecutionQueueItem>(`/api/http-plans/${id}/execute`, {
+  deleteTestPlan: (id: string) =>
+    request<void>(`/api/test-plans/${id}`, { method: "DELETE" }),
+  executeTestPlan: (id: string) =>
+    request<ExecutionQueueItem>(`/api/test-plans/${id}/execute`, {
       method: "POST",
     }),
   listExecutions: () => request<ExecutionSummary[]>("/api/executions"),

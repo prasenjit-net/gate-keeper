@@ -9,8 +9,8 @@ import DashboardPage from "./pages/Dashboard";
 import ExecutionDetailPage from "./pages/ExecutionDetail";
 import ExecutionQueuePage from "./pages/ExecutionQueue";
 import ExecutionsPage from "./pages/Executions";
-import HttpPlanDetailPage from "./pages/HttpPlanDetail";
-import HttpPlansPage from "./pages/HttpPlans";
+import TestPlanDetailPage from "./pages/TestPlanDetail";
+import TestPlansPage from "./pages/TestPlans";
 import NotFoundPage from "./pages/NotFound";
 import SettingsPage from "./pages/Settings";
 
@@ -30,16 +30,16 @@ const componentsRoute = createRoute({
   component: ComponentsPage,
 });
 
-const httpPlansRoute = createRoute({
+const testPlansRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/http-plans",
-  component: HttpPlansPage,
+  path: "/test-plans",
+  component: TestPlansPage,
 });
 
-const httpPlanDetailRoute = createRoute({
+const testPlanDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/http-plans/$planId",
-  component: HttpPlanDetailPage,
+  path: "/test-plans/$planId",
+  component: TestPlanDetailPage,
 });
 
 const executionsRoute = createRoute({
@@ -68,8 +68,8 @@ const settingsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
-  httpPlansRoute,
-  httpPlanDetailRoute,
+  testPlansRoute,
+  testPlanDetailRoute,
   executionQueueRoute,
   executionsRoute,
   executionDetailRoute,

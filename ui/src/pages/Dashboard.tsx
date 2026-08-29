@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import ActivityFeed from "../components/ActivityFeed";
 import Badge from "../components/Badge";
-import { EmptyState } from "../components/HttpPlanPanels";
+import { EmptyState } from "../components/TestPlanPanels";
 import StatCard from "../components/StatCard";
 import { useLive } from "../context/LiveContext";
 import { IconActivity, IconCheckCircle, IconDatabase, IconServer } from "../icons";
@@ -15,7 +15,7 @@ function activeQueue(items: ExecutionQueueItem[]) {
 
 export default function DashboardPage() {
   const { metrics, activities, queue: liveQueue } = useLive();
-  const plansQuery = useQuery({ queryKey: ["http-plans"], queryFn: api.listHttpPlans });
+  const plansQuery = useQuery({ queryKey: ["test-plans"], queryFn: api.listTestPlans });
   const executionsQuery = useQuery({ queryKey: ["executions"], queryFn: api.listExecutions });
   const queueQuery = useQuery({
     queryKey: ["execution-queue"],

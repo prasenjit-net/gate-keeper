@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use crate::services::http_plans::ExecutionQueueItem;
 use crate::services::metrics::MetricsSnapshot;
+use crate::services::test_plans::ExecutionQueueItem;
 
 /// Server-push events delivered to every WebSocket client as JSON,
 /// discriminated by a `type` field, e.g.:
