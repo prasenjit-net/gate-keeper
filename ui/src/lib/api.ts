@@ -93,6 +93,7 @@ export interface ExecutionReport {
   id: string;
   planId: string;
   planName: string;
+  script: string;
   startedAtMs: number;
   finishedAtMs: number;
   durationMs: number;

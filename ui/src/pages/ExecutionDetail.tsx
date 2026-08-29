@@ -85,6 +85,16 @@ export default function ExecutionDetailPage() {
           </button>
         </div>
       </section>
+
+      <section className="card xl:col-start-2">
+        <div className="card-head">
+          <h2>Script Snapshot</h2>
+          <span className="card-hint">captured at execution time</span>
+        </div>
+        <pre className="max-h-[420px] overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-[0.75rem] whitespace-pre-wrap text-ink-muted">
+          {execution.report.script}
+        </pre>
+      </section>
     </div>
   );
 }

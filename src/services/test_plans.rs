@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use std::time::SystemTime;
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -70,6 +72,7 @@ pub struct ExecutionReport {
     pub id: String,
     pub plan_id: String,
     pub plan_name: String,
+    pub script: String,
     pub started_at_ms: i64,
     pub finished_at_ms: i64,
     pub duration_ms: u128,
@@ -198,6 +201,8 @@ pub struct TestPlanStore {
     plans: RwLock<Vec<StoredPlan>>,
     executions: RwLock<Vec<ExecutionSummary>>,
     queue: RwLock<Vec<ExecutionQueueItem>>,
+    plan_cache_dirty: Arc<AtomicBool>,
+    plan_watcher: Option<RecommendedWatcher>,
     counter: AtomicU64,
 }
 
@@ -212,6 +217,8 @@ impl TestPlanStore {
         }
 
         let plans = load_plans(&data_dir).await;
+        let plan_cache_dirty = Arc::new(AtomicBool::new(false));
+        let plan_watcher = watch_plan_directory(&data_dir, Arc::clone(&plan_cache_dirty));
         let executions = read_json::<ExecutionsIndex>(&executions_index_path(&data_dir))
             .await
             .map(|index| index.executions)
@@ -232,17 +239,21 @@ impl TestPlanStore {
             plans: RwLock::new(plans),
             executions: RwLock::new(executions),
             queue: RwLock::new(Vec::new()),
+            plan_cache_dirty,
+            plan_watcher,
             counter: AtomicU64::new(max_id + 1),
         }
     }
 
     pub async fn list_plans(&self) -> Vec<StoredPlanSummary> {
+        self.refresh_plans_if_dirty().await;
         let mut plans: Vec<_> = self.plans.read().await.iter().map(plan_summary).collect();
         plans.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
         plans
     }
 
     pub async fn get_plan(&self, id: &str) -> AppResult<StoredPlan> {
+        self.refresh_plans_if_dirty().await;
         self.plans
             .read()
             .await
@@ -253,6 +264,7 @@ impl TestPlanStore {
     }
 
     pub async fn create_plan(&self, input: SavePlanInput) -> AppResult<StoredPlan> {
+        self.refresh_plans_if_dirty().await;
         let now = chrono::Utc::now().timestamp_millis();
         let id = self.unique_plan_id(&input.name).await;
         persist_plan_content(&self.data_dir, &id, &input.content).await?;
@@ -273,6 +285,7 @@ impl TestPlanStore {
     }
 
     pub async fn update_plan(&self, id: &str, input: SavePlanInput) -> AppResult<StoredPlan> {
+        self.refresh_plans_if_dirty().await;
         let mut plans = self.plans.write().await;
         let index = plans
             .iter_mut()
@@ -311,6 +324,7 @@ impl TestPlanStore {
     }
 
     pub async fn delete_plan(&self, id: &str) -> AppResult<()> {
+        self.refresh_plans_if_dirty().await;
         let mut plans = self.plans.write().await;
         let index = plans
             .iter()
@@ -406,12 +420,13 @@ impl TestPlanStore {
         plan: &StoredPlan,
         execution_id: String,
     ) -> AppResult<StoredExecution> {
+        let script = plan.content.clone();
         let parsed = parse(TestPlanInput {
             name: Some(plan.name.clone()),
-            content: plan.content.clone(),
+            content: script.clone(),
             variables: BTreeMap::new(),
         })?;
-        let report = run_plan(&plan.id, &parsed, execution_id).await?;
+        let report = run_plan(&plan.id, &parsed, execution_id, script).await?;
         let log = execution_log(&report);
         let report_path = self
             .data_dir
@@ -528,6 +543,13 @@ impl TestPlanStore {
     fn next_id(&self, prefix: &str) -> String {
         let next = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}-{}-{next}", chrono::Utc::now().timestamp_millis())
+    }
+
+    async fn refresh_plans_if_dirty(&self) {
+        if self.plan_cache_dirty.swap(false, Ordering::AcqRel) || self.plan_watcher.is_none() {
+            let plans = load_plans(&self.data_dir).await;
+            *self.plans.write().await = plans;
+        }
     }
 
     async fn unique_plan_id(&self, name: &str) -> String {
@@ -671,6 +693,51 @@ async fn load_plans(data_dir: &Path) -> Vec<StoredPlan> {
     }
 
     plans
+}
+
+fn watch_plan_directory(data_dir: &Path, dirty: Arc<AtomicBool>) -> Option<RecommendedWatcher> {
+    let plans_dir = data_dir.join("plans");
+    let watcher =
+        notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
+            Ok(event) => {
+                if is_plan_change_event(&event.kind)
+                    && event.paths.iter().any(|path| {
+                        path.extension().and_then(|extension| extension.to_str()) == Some("http")
+                            || path.file_name().and_then(|name| name.to_str()) == Some("plans")
+                    })
+                {
+                    dirty.store(true, Ordering::Release);
+                }
+            }
+            Err(err) => tracing::warn!("failed to watch test plan directory: {err}"),
+        });
+    match watcher {
+        Ok(mut watcher) => match watcher.watch(&plans_dir, RecursiveMode::NonRecursive) {
+            Ok(()) => Some(watcher),
+            Err(err) => {
+                tracing::warn!(
+                    "failed to watch test plan directory {}: {err}",
+                    plans_dir.display()
+                );
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!("failed to initialize test plan directory watcher: {err}");
+            None
+        }
+    }
+}
+
+fn is_plan_change_event(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Any
+            | EventKind::Create(_)
+            | EventKind::Modify(_)
+            | EventKind::Remove(_)
+            | EventKind::Other
+    )
 }
 
 fn is_plan_file(path: &Path) -> bool {
@@ -895,14 +962,16 @@ pub fn parse(input: TestPlanInput) -> AppResult<TestPlan> {
 
 #[cfg(test)]
 pub async fn execute(input: TestPlanInput) -> AppResult<ExecutionReport> {
+    let script = input.content.clone();
     let plan = parse(input)?;
-    run_plan("ad-hoc", &plan, new_id("exec")).await
+    run_plan("ad-hoc", &plan, new_id("exec"), script).await
 }
 
 async fn run_plan(
     plan_id: &str,
     plan: &TestPlan,
     execution_id: String,
+    script: String,
 ) -> AppResult<ExecutionReport> {
     let started = Instant::now();
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -924,6 +993,7 @@ async fn run_plan(
         id: execution_id,
         plan_id: plan_id.to_string(),
         plan_name: plan.name.clone(),
+        script,
         started_at_ms,
         finished_at_ms,
         duration_ms: started.elapsed().as_millis(),
@@ -1408,12 +1478,13 @@ GET http://{addr}/missing
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         let store = TestPlanStore::open(&data_dir).await;
+        let script = format!(
+            "### OK\nGET http://{addr}/ok\n> {{% client.assert(response.status === 200); %}}\n"
+        );
         let plan = store
             .create_plan(SavePlanInput {
                 name: "Persisted".into(),
-                content: format!(
-                    "### OK\nGET http://{addr}/ok\n> {{% client.assert(response.status === 200); %}}\n"
-                ),
+                content: script.clone(),
                 variables: BTreeMap::new(),
             })
             .await
@@ -1426,6 +1497,8 @@ GET http://{addr}/missing
 
         assert_eq!(execution.status, QueueStatus::Passed);
         assert_eq!(execution.passed, Some(1));
+        let stored_execution = store.get_execution(&execution.id).await.unwrap();
+        assert_eq!(stored_execution.report.script, script);
         assert!(data_dir
             .join("reports")
             .join(format!("{}.json", execution.id))
@@ -1481,5 +1554,55 @@ GET http://{addr}/missing
 
         store.delete_plan(&updated.id).await.unwrap();
         assert!(!updated_path.exists());
+    }
+
+    #[tokio::test]
+    async fn store_refreshes_manual_file_changes_before_execution() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route("/old", get(|| async { StatusCode::INTERNAL_SERVER_ERROR }))
+            .route("/ok", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-refresh-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = TestPlanStore::open(&data_dir).await;
+        let plan = store
+            .create_plan(SavePlanInput {
+                name: "Manual edit".into(),
+                content: format!(
+                    "### Old\nGET http://{addr}/old\n> {{% client.assert(response.status === 200); %}}\n"
+                ),
+                variables: BTreeMap::new(),
+            })
+            .await
+            .unwrap();
+        let plan_path = data_dir.join("plans").join(format!("{}.http", plan.id));
+        let updated_script = format!(
+            "### OK\nGET http://{addr}/ok\n> {{% client.assert(response.status === 200); %}}\n"
+        );
+        tokio::fs::write(&plan_path, &updated_script).await.unwrap();
+        store.plan_cache_dirty.store(true, Ordering::Release);
+
+        let refreshed = store.get_plan(&plan.id).await.unwrap();
+        assert_eq!(refreshed.content, updated_script);
+        assert_eq!(
+            refreshed.parsed.requests[0].url,
+            format!("http://{addr}/ok")
+        );
+
+        let queued = store.enqueue_execution(&plan.id).await.unwrap();
+        store.mark_queue_running(&queued.id).await.unwrap();
+        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+
+        server.abort();
+
+        assert_eq!(execution.status, QueueStatus::Passed);
+        let stored_execution = store.get_execution(&execution.id).await.unwrap();
+        assert_eq!(stored_execution.report.script, updated_script);
     }
 }

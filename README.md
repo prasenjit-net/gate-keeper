@@ -91,11 +91,14 @@ Gate Keeper stores runtime data in the local `data/` folder:
   JetBrains-style `.http` script text. Plans are parsed only when loaded,
   previewed, or executed.
 - `data/executions/index.json` contains saved execution summaries.
-- `data/reports/<execution-id>.json` contains each full execution report.
+- `data/reports/<execution-id>.json` contains each full execution report,
+  including the exact `.http` script text used for that execution.
 - `data/reports/<execution-id>.log` contains the plain-text execution log.
 
 Execution queue status is intentionally in-memory. Completed execution summaries,
-reports, and logs are saved to disk.
+reports, and logs are saved to disk. Gate Keeper watches `data/plans/` for
+`.http` file changes and refreshes its cached plan list before serving plan
+details or starting the next execution.
 
 ## API
 
