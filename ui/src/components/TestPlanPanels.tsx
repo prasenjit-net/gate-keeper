@@ -63,6 +63,12 @@ function RequestItem({ request }: { request: TestPlanRequest }) {
         <Badge>{request.headers.length} headers</Badge>
         <Badge>{request.body ? "body" : "no body"}</Badge>
         <Badge>{request.assertions.length} assertions</Badge>
+        {request.preRequestScripts.length > 0 ? (
+          <Badge>{request.preRequestScripts.length} pre scripts</Badge>
+        ) : null}
+        {request.responseHandlerScripts.length > 0 ? (
+          <Badge>{request.responseHandlerScripts.length} response scripts</Badge>
+        ) : null}
       </div>
     </li>
   );
@@ -122,6 +128,11 @@ function ResultItem({ result }: { result: ExecutionResult }) {
             <Badge>{result.responseBytes} bytes</Badge>
           </div>
           {result.error ? <p className="mt-2 text-sm text-err">{result.error}</p> : null}
+          {result.logs.length > 0 ? (
+            <pre className="mt-2 max-h-[120px] overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-[0.72rem] whitespace-pre-wrap text-ink-muted">
+              {result.logs.join("\n")}
+            </pre>
+          ) : null}
           {result.assertions.length > 0 ? (
             <ul className="mt-2 flex flex-col gap-1">
               {result.assertions.map((assertion) => (

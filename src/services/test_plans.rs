@@ -8,7 +8,9 @@ use std::time::SystemTime;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::Url;
+use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
 use crate::error::{AppError, AppResult};
@@ -43,7 +45,22 @@ pub struct TestPlanRequest {
     pub url: String,
     pub headers: Vec<HttpHeader>,
     pub body: Option<String>,
+    pub pre_request_scripts: Vec<TestPlanScript>,
+    pub response_handler_scripts: Vec<TestPlanScript>,
     pub assertions: Vec<HttpAssertion>,
+    #[serde(skip)]
+    raw_url: String,
+    #[serde(skip)]
+    raw_headers: Vec<HttpHeader>,
+    #[serde(skip)]
+    raw_body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TestPlanScript {
+    Inline { source: String },
+    File { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +112,7 @@ pub struct ExecutionResult {
     pub response_bytes: usize,
     pub response_preview: String,
     pub error: Option<String>,
+    pub logs: Vec<String>,
     pub assertions: Vec<AssertionResult>,
 }
 
@@ -426,7 +444,15 @@ impl TestPlanStore {
             content: script.clone(),
             variables: BTreeMap::new(),
         })?;
-        let report = run_plan(&plan.id, &parsed, execution_id, script).await?;
+        let script_base_dir = self.data_dir.join("plans");
+        let report = run_plan(
+            &plan.id,
+            &parsed,
+            execution_id,
+            script,
+            Some(&script_base_dir),
+        )
+        .await?;
         let log = execution_log(&report);
         let report_path = self
             .data_dir
@@ -889,6 +915,9 @@ fn execution_log(report: &ExecutionReport) -> String {
         if let Some(error) = &result.error {
             lines.push(format!("  error: {error}"));
         }
+        for log in &result.logs {
+            lines.push(format!("  log: {log}"));
+        }
         for assertion in &result.assertions {
             lines.push(format!(
                 "  {} {}: {}",
@@ -964,7 +993,7 @@ pub fn parse(input: TestPlanInput) -> AppResult<TestPlan> {
 pub async fn execute(input: TestPlanInput) -> AppResult<ExecutionReport> {
     let script = input.content.clone();
     let plan = parse(input)?;
-    run_plan("ad-hoc", &plan, new_id("exec"), script).await
+    run_plan("ad-hoc", &plan, new_id("exec"), script, None).await
 }
 
 async fn run_plan(
@@ -972,6 +1001,7 @@ async fn run_plan(
     plan: &TestPlan,
     execution_id: String,
     script: String,
+    script_base_dir: Option<&Path>,
 ) -> AppResult<ExecutionReport> {
     let started = Instant::now();
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -981,9 +1011,19 @@ async fn run_plan(
         .build()
         .map_err(|err| AppError::Internal(format!("failed to create HTTP client: {err}")))?;
 
+    let mut globals = BTreeMap::new();
     let mut results = Vec::with_capacity(plan.requests.len());
     for request in &plan.requests {
-        results.push(execute_one(&client, request).await);
+        results.push(
+            execute_one(
+                &client,
+                request,
+                &plan.variables,
+                &mut globals,
+                script_base_dir,
+            )
+            .await,
+        );
     }
 
     let finished_at_ms = chrono::Utc::now().timestamp_millis();
@@ -1004,27 +1044,136 @@ async fn run_plan(
     })
 }
 
-async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> ExecutionResult {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecutableRequest {
+    method: String,
+    url: String,
+    headers: Vec<HttpHeader>,
+    body: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptResponse {
+    status: u16,
+    headers: BTreeMap<String, String>,
+    content_type: String,
+    body: Value,
+    body_text: String,
+    duration_ms: u128,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptOutcome {
+    #[serde(default)]
+    tests: Vec<AssertionResult>,
+    #[serde(default)]
+    logs: Vec<String>,
+    #[serde(default)]
+    globals: BTreeMap<String, Value>,
+    #[serde(default)]
+    request_variables: BTreeMap<String, Value>,
+}
+
+async fn execute_one(
+    client: &reqwest::Client,
+    request: &TestPlanRequest,
+    file_variables: &BTreeMap<String, String>,
+    globals: &mut BTreeMap<String, Value>,
+    script_base_dir: Option<&Path>,
+) -> ExecutionResult {
     let started = Instant::now();
     let mut assertion_results = Vec::new();
+    let mut logs = Vec::new();
     let mut status = None;
     let mut response_bytes = 0;
     let mut response_preview = String::new();
     let mut error = None;
+    let mut request_variables = BTreeMap::new();
 
-    let method = match Method::from_bytes(request.method.as_bytes()) {
+    let mut executable_request = ExecutableRequest {
+        method: request.method.clone(),
+        url: request.raw_url.clone(),
+        headers: request.raw_headers.clone(),
+        body: request.raw_body.clone(),
+    };
+
+    for script in &request.pre_request_scripts {
+        match resolve_script(script, script_base_dir).await {
+            Ok(source) => {
+                match run_js_script(
+                    "pre-request",
+                    &source,
+                    request,
+                    &executable_request,
+                    None,
+                    globals,
+                    &mut request_variables,
+                ) {
+                    Ok(outcome) => {
+                        logs.extend(outcome.logs);
+                        assertion_results.extend(outcome.tests);
+                    }
+                    Err(err) => {
+                        error = Some(err);
+                        break;
+                    }
+                }
+            }
+            Err(err) => {
+                error = Some(err);
+                break;
+            }
+        }
+    }
+
+    if error.is_none() {
+        match resolve_request(
+            &executable_request,
+            file_variables,
+            globals,
+            &request_variables,
+        ) {
+            Ok(resolved) => executable_request = resolved,
+            Err(err) => error = Some(err.to_string()),
+        }
+    }
+
+    if let Some(error) = error {
+        return ExecutionResult {
+            id: request.id,
+            name: request.name.clone(),
+            method: executable_request.method,
+            url: executable_request.url,
+            status: None,
+            ok: false,
+            duration_ms: started.elapsed().as_millis(),
+            response_bytes,
+            response_preview,
+            error: Some(error),
+            logs,
+            assertions: assertion_results,
+        };
+    }
+
+    let method = match Method::from_bytes(executable_request.method.as_bytes()) {
         Ok(method) => method,
         Err(err) => {
             return ExecutionResult::failed_before_send(
                 request,
                 started,
+                executable_request,
+                logs,
+                assertion_results,
                 format!("invalid method: {err}"),
             );
         }
     };
 
     let mut headers = HeaderMap::new();
-    for header in &request.headers {
+    for header in &executable_request.headers {
         match (
             HeaderName::from_bytes(header.name.as_bytes()),
             HeaderValue::from_str(&header.value),
@@ -1036,6 +1185,9 @@ async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> Exe
                 return ExecutionResult::failed_before_send(
                     request,
                     started,
+                    executable_request.clone(),
+                    logs,
+                    assertion_results,
                     format!("invalid header name {}: {err}", header.name),
                 );
             }
@@ -1043,6 +1195,9 @@ async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> Exe
                 return ExecutionResult::failed_before_send(
                     request,
                     started,
+                    executable_request.clone(),
+                    logs,
+                    assertion_results,
                     format!("invalid value for header {}: {err}", header.name),
                 );
             }
@@ -1050,26 +1205,70 @@ async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> Exe
     }
 
     let send_result = client
-        .request(method, &request.url)
+        .request(method, &executable_request.url)
         .headers(headers)
-        .body(request.body.clone().unwrap_or_default())
+        .body(executable_request.body.clone().unwrap_or_default())
         .send()
         .await;
 
     match send_result {
         Ok(response) => {
             let response_status = response.status().as_u16();
+            let response_headers = response_headers_to_map(response.headers());
+            let response_content_type = response_headers
+                .get("content-type")
+                .cloned()
+                .unwrap_or_default();
             status = Some(response_status);
             match response.bytes().await {
                 Ok(bytes) => {
                     response_bytes = bytes.len();
                     response_preview = preview_bytes(&bytes);
+                    let response_body = response_body_value(&bytes);
+                    let script_response = ScriptResponse {
+                        status: response_status,
+                        headers: response_headers,
+                        content_type: response_content_type,
+                        body: response_body,
+                        body_text: String::from_utf8_lossy(&bytes).to_string(),
+                        duration_ms: started.elapsed().as_millis(),
+                    };
+                    for script in &request.response_handler_scripts {
+                        match resolve_script(script, script_base_dir).await {
+                            Ok(source) => {
+                                match run_js_script(
+                                    "response handler",
+                                    &source,
+                                    request,
+                                    &executable_request,
+                                    Some(&script_response),
+                                    globals,
+                                    &mut request_variables,
+                                ) {
+                                    Ok(outcome) => {
+                                        logs.extend(outcome.logs);
+                                        assertion_results.extend(outcome.tests);
+                                    }
+                                    Err(err) => {
+                                        error = Some(err);
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                error = Some(err);
+                                break;
+                            }
+                        }
+                    }
                 }
                 Err(err) => error = Some(format!("failed to read response body: {err}")),
             }
 
-            for assertion in &request.assertions {
-                assertion_results.push(evaluate_assertion(assertion, response_status));
+            if request.response_handler_scripts.is_empty() {
+                for assertion in &request.assertions {
+                    assertion_results.push(evaluate_assertion(assertion, response_status));
+                }
             }
         }
         Err(err) => error = Some(err.to_string()),
@@ -1080,34 +1279,328 @@ async fn execute_one(client: &reqwest::Client, request: &TestPlanRequest) -> Exe
     ExecutionResult {
         id: request.id,
         name: request.name.clone(),
-        method: request.method.clone(),
-        url: request.url.clone(),
+        method: executable_request.method,
+        url: executable_request.url,
         status,
         ok,
         duration_ms: started.elapsed().as_millis(),
         response_bytes,
         response_preview,
         error,
+        logs,
         assertions: assertion_results,
     }
 }
 
 impl ExecutionResult {
-    fn failed_before_send(request: &TestPlanRequest, started: Instant, error: String) -> Self {
+    fn failed_before_send(
+        request: &TestPlanRequest,
+        started: Instant,
+        executable_request: ExecutableRequest,
+        logs: Vec<String>,
+        assertions: Vec<AssertionResult>,
+        error: String,
+    ) -> Self {
         Self {
             id: request.id,
             name: request.name.clone(),
-            method: request.method.clone(),
-            url: request.url.clone(),
+            method: executable_request.method,
+            url: executable_request.url,
             status: None,
             ok: false,
             duration_ms: started.elapsed().as_millis(),
             response_bytes: 0,
             response_preview: String::new(),
             error: Some(error),
-            assertions: Vec::new(),
+            logs,
+            assertions,
         }
     }
+}
+
+fn run_js_script(
+    phase: &str,
+    source: &str,
+    plan_request: &TestPlanRequest,
+    executable_request: &ExecutableRequest,
+    response: Option<&ScriptResponse>,
+    globals: &mut BTreeMap<String, Value>,
+    request_variables: &mut BTreeMap<String, Value>,
+) -> Result<ScriptOutcome, String> {
+    reject_unsupported_script_features(source)?;
+    let runtime = Runtime::new().map_err(|err| format!("failed to create JS runtime: {err}"))?;
+    runtime.set_memory_limit(8 * 1024 * 1024);
+    runtime.set_max_stack_size(256 * 1024);
+    let context =
+        Context::full(&runtime).map_err(|err| format!("failed to create JS context: {err}"))?;
+
+    context.with(|ctx| {
+        let source = build_script_source(
+            phase,
+            source,
+            plan_request,
+            executable_request,
+            response,
+            globals,
+            request_variables,
+        )?;
+        let raw = ctx
+            .eval::<String, _>(source)
+            .map_err(|err| format!("{phase} script failed: {err}"))?;
+        let outcome = serde_json::from_str::<ScriptOutcome>(&raw)
+            .map_err(|err| format!("{phase} script returned invalid state: {err}"))?;
+        *globals = outcome.globals.clone();
+        *request_variables = outcome.request_variables.clone();
+        Ok(outcome)
+    })
+}
+
+fn reject_unsupported_script_features(source: &str) -> Result<(), String> {
+    let trimmed = source.trim_start();
+    if trimmed.starts_with("import ") || trimmed.contains("\nimport ") {
+        return Err("ES module imports are not supported yet".into());
+    }
+    if source.contains("crypto.") {
+        return Err("JetBrains Crypto API is not supported yet".into());
+    }
+    Ok(())
+}
+
+fn build_script_source(
+    phase: &str,
+    user_source: &str,
+    plan_request: &TestPlanRequest,
+    executable_request: &ExecutableRequest,
+    response: Option<&ScriptResponse>,
+    globals: &BTreeMap<String, Value>,
+    request_variables: &BTreeMap<String, Value>,
+) -> Result<String, String> {
+    let request_json = serde_json::to_string(&json!({
+        "id": plan_request.id,
+        "name": plan_request.name,
+        "method": executable_request.method,
+        "url": executable_request.url,
+        "headers": headers_to_map(&executable_request.headers),
+        "body": executable_request.body,
+    }))
+    .map_err(|err| err.to_string())?;
+    let response_json = serde_json::to_string(&response).map_err(|err| err.to_string())?;
+    let globals_json = serde_json::to_string(globals).map_err(|err| err.to_string())?;
+    let request_variables_json =
+        serde_json::to_string(request_variables).map_err(|err| err.to_string())?;
+    let source_json = serde_json::to_string(user_source).map_err(|err| err.to_string())?;
+    let phase_json = serde_json::to_string(phase).map_err(|err| err.to_string())?;
+
+    Ok(format!(
+        r#"
+(() => {{
+  const __gk = {{
+    tests: [],
+    logs: [],
+    globals: {globals_json},
+    requestVariables: {request_variables_json}
+  }};
+  const __requestBase = {request_json};
+  const __responseBase = {response_json};
+  const __phase = {phase_json};
+  const __source = {source_json};
+  const __stringify = (value) => {{
+    if (value === undefined) return "undefined";
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.stack || value.message || String(value);
+    try {{ return JSON.stringify(value); }} catch (_) {{ return String(value); }}
+  }};
+  const __message = (error) => error && error.message ? String(error.message) : String(error);
+  const __scope = (bag) => ({{
+    get(name) {{
+      const value = bag[String(name)];
+      return value === undefined ? null : value;
+    }},
+    set(name, value) {{
+      bag[String(name)] = value;
+    }},
+    clear(name) {{
+      delete bag[String(name)];
+    }}
+  }});
+  const __globalScope = __scope(__gk.globals);
+  const __requestScope = __scope(__gk.requestVariables);
+  const __fileScope = __scope({{}});
+  const __environmentScope = __scope({{}});
+  let __testDepth = 0;
+  const client = {{
+    test(name, fn) {{
+      const started = Date.now();
+      try {{
+        __testDepth++;
+        fn();
+        __gk.tests.push({{
+          name: String(name),
+          passed: true,
+          message: "passed",
+          durationMs: Date.now() - started
+        }});
+      }} catch (error) {{
+        __gk.tests.push({{
+          name: String(name),
+          passed: false,
+          message: __message(error),
+          durationMs: Date.now() - started
+        }});
+      }} finally {{
+        __testDepth = Math.max(0, __testDepth - 1);
+      }}
+    }},
+    assert(condition, message) {{
+      if (!condition) throw new Error(message || "Assertion failed");
+      if (__testDepth === 0) {{
+        __gk.tests.push({{
+          name: message ? String(message) : "Assertion",
+          passed: true,
+          message: message ? String(message) : "passed"
+        }});
+      }}
+    }},
+    log(...values) {{
+      __gk.logs.push(values.map(__stringify).join(" "));
+    }},
+    global: __globalScope,
+    variables: {{
+      get(name) {{
+        if (Object.prototype.hasOwnProperty.call(__gk.requestVariables, String(name))) return __gk.requestVariables[String(name)];
+        if (Object.prototype.hasOwnProperty.call(__gk.globals, String(name))) return __gk.globals[String(name)];
+        return null;
+      }},
+      set(name, value) {{
+        __gk.requestVariables[String(name)] = value;
+      }},
+      global: __globalScope,
+      request: __requestScope,
+      file: __fileScope,
+      environment: __environmentScope
+    }}
+  }};
+  const request = Object.assign({{}}, __requestBase, {{
+    variables: __requestScope,
+    environment: __environmentScope,
+    iteration() {{ return 0; }},
+    templateValue() {{ return null; }}
+  }});
+  const response = __responseBase || null;
+  try {{
+    const __runner = new Function("client", "request", "response", __source);
+    __runner(client, request, response);
+  }} catch (error) {{
+    __gk.tests.push({{
+      name: `${{__phase}} script`,
+      passed: false,
+      message: __message(error),
+      durationMs: 0
+    }});
+  }}
+  return JSON.stringify(__gk);
+}})()
+"#
+    ))
+}
+
+async fn resolve_script(
+    script: &TestPlanScript,
+    base_dir: Option<&Path>,
+) -> Result<String, String> {
+    match script {
+        TestPlanScript::Inline { source } => Ok(source.clone()),
+        TestPlanScript::File { path } => {
+            let Some(base_dir) = base_dir else {
+                return Err(format!(
+                    "external script {path} cannot be resolved for ad-hoc execution"
+                ));
+            };
+            let full_path = safe_join(base_dir, path)?;
+            tokio::fs::read_to_string(&full_path).await.map_err(|err| {
+                format!(
+                    "failed to read external script {}: {err}",
+                    full_path.display()
+                )
+            })
+        }
+    }
+}
+
+fn safe_join(base_dir: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute() {
+        return Err(format!("external script path {relative} must be relative"));
+    }
+    if relative_path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "external script path {relative} cannot leave data/plans"
+        ));
+    }
+    Ok(base_dir.join(relative_path))
+}
+
+fn headers_to_map(headers: &[HttpHeader]) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .map(|header| (header.name.clone(), header.value.clone()))
+        .collect()
+}
+
+fn response_headers_to_map(headers: &HeaderMap) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_ascii_lowercase(),
+                value.to_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn response_body_value(bytes: &[u8]) -> Value {
+    serde_json::from_slice(bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(bytes).to_string()))
+}
+
+fn resolve_request(
+    request: &ExecutableRequest,
+    file_variables: &BTreeMap<String, String>,
+    globals: &BTreeMap<String, Value>,
+    request_variables: &BTreeMap<String, Value>,
+) -> AppResult<ExecutableRequest> {
+    let url = substitute_runtime(&request.url, file_variables, globals, request_variables)?;
+    validate_url(&url)?;
+    let headers = request
+        .headers
+        .iter()
+        .map(|header| {
+            Ok(HttpHeader {
+                name: header.name.clone(),
+                value: substitute_runtime(
+                    &header.value,
+                    file_variables,
+                    globals,
+                    request_variables,
+                )?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    let body = request
+        .body
+        .as_ref()
+        .map(|body| substitute_runtime(body, file_variables, globals, request_variables))
+        .transpose()?;
+    Ok(ExecutableRequest {
+        method: request.method.clone(),
+        url,
+        headers,
+        body,
+    })
 }
 
 fn evaluate_assertion(assertion: &HttpAssertion, status: u16) -> AssertionResult {
@@ -1148,15 +1641,22 @@ fn parse_block(
     variables: &BTreeMap<String, String>,
     warnings: &mut Vec<String>,
 ) -> AppResult<Option<TestPlanRequest>> {
+    let (pre_request_scripts, pre_request_mask) = collect_scripts(&block.lines, '<', id, warnings);
+    let (response_handler_scripts, response_handler_mask) =
+        collect_scripts(&block.lines, '>', id, warnings);
+    let script_mask: Vec<_> = pre_request_mask
+        .iter()
+        .zip(response_handler_mask.iter())
+        .map(|(pre, response)| *pre || *response)
+        .collect();
+
     let mut request_line_index = None;
     for (index, line) in block.lines.iter().enumerate() {
+        if script_mask[index] {
+            continue;
+        }
         let trimmed = line.trim();
-        if trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || trimmed.starts_with("//")
-            || trimmed.starts_with('<')
-            || trimmed.starts_with('>')
-        {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
             continue;
         }
         if is_request_line(trimmed) {
@@ -1169,35 +1669,30 @@ fn parse_block(
         return Ok(None);
     };
 
-    let request_line = substitute(&block.lines[index], variables)?;
+    let mut raw_parts = block.lines[index].split_whitespace();
+    raw_parts.next();
+    let raw_url = raw_parts
+        .next()
+        .ok_or_else(|| AppError::BadRequest(format!("request {id} is missing a URL")))?
+        .to_string();
+    let request_line = substitute_allow_unresolved(&block.lines[index], variables);
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_uppercase();
     let url = parts
         .next()
         .ok_or_else(|| AppError::BadRequest(format!("request {id} is missing a URL")))?;
-    validate_url(url)?;
-
     let mut headers = Vec::new();
+    let mut raw_headers = Vec::new();
     let mut body_lines = Vec::new();
     let mut assertions = Vec::new();
     let mut in_body = false;
-    let mut in_response_handler = false;
 
-    for raw_line in block.lines.iter().skip(index + 1) {
+    for (line_index, raw_line) in block.lines.iter().enumerate().skip(index + 1) {
+        if script_mask[line_index] {
+            continue;
+        }
         let trimmed = raw_line.trim();
-        if trimmed.starts_with('>') {
-            in_response_handler = true;
-            collect_assertion_line(trimmed, &mut assertions);
-            continue;
-        }
-        if in_response_handler {
-            collect_assertion_line(trimmed, &mut assertions);
-            continue;
-        }
-        if trimmed.starts_with('<') {
-            warnings.push(format!(
-                "Request {id} includes a pre-request script; scripts are not executed yet"
-            ));
+        if trimmed.starts_with('>') || trimmed.starts_with('<') {
             continue;
         }
         if !in_body && trimmed.is_empty() {
@@ -1212,25 +1707,48 @@ fn parse_block(
                 warnings.push(format!("Request {id} ignored malformed header: {trimmed}"));
                 continue;
             };
+            raw_headers.push(HttpHeader {
+                name: name.trim().to_string(),
+                value: value.trim().to_string(),
+            });
             headers.push(HttpHeader {
                 name: name.trim().to_string(),
-                value: substitute(value.trim(), variables)?,
+                value: substitute_allow_unresolved(value.trim(), variables),
             });
         } else {
             body_lines.push(raw_line.as_str());
         }
     }
 
-    let body = if body_lines.is_empty() {
+    while body_lines.last().is_some_and(|line| line.trim().is_empty()) {
+        body_lines.pop();
+    }
+
+    let raw_body = if body_lines.is_empty() {
         None
     } else {
-        Some(substitute(&body_lines.join("\n"), variables)?)
+        Some(body_lines.join("\n"))
     };
-    if assertions.is_empty() {
+    let body = raw_body
+        .as_ref()
+        .map(|body| substitute_allow_unresolved(body, variables));
+    for script in &response_handler_scripts {
+        if let TestPlanScript::Inline { source } = script {
+            for line in source.lines() {
+                collect_assertion_line(line.trim(), &mut assertions);
+            }
+            collect_assertion_line(source.trim(), &mut assertions);
+        }
+    }
+    if assertions.is_empty() && response_handler_scripts.is_empty() {
         assertions.push(HttpAssertion {
             name: "HTTP status is successful".into(),
             kind: AssertionKind::StatusEquals { expected: 200 },
         });
+    }
+    let url = substitute_allow_unresolved(url, variables);
+    if !url.contains("{{") {
+        validate_url(&url)?;
     }
 
     Ok(Some(TestPlanRequest {
@@ -1240,8 +1758,63 @@ fn parse_block(
         url: url.to_string(),
         headers,
         body,
+        pre_request_scripts,
+        response_handler_scripts,
         assertions,
+        raw_url,
+        raw_headers,
+        raw_body,
     }))
+}
+
+fn collect_scripts(
+    lines: &[String],
+    marker: char,
+    request_id: usize,
+    warnings: &mut Vec<String>,
+) -> (Vec<TestPlanScript>, Vec<bool>) {
+    let mut scripts = Vec::new();
+    let mut mask = vec![false; lines.len()];
+    let mut index = 0;
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        let Some(rest) = trimmed.strip_prefix(marker) else {
+            index += 1;
+            continue;
+        };
+        mask[index] = true;
+        let rest = rest.trim();
+        if let Some(first_source) = rest.strip_prefix("{%") {
+            let mut source = String::new();
+            let mut current = first_source;
+            loop {
+                if let Some(end) = current.find("%}") {
+                    source.push_str(&current[..end]);
+                    break;
+                }
+                source.push_str(current);
+                index += 1;
+                if index >= lines.len() {
+                    warnings.push(format!(
+                        "Request {request_id} has an unterminated script block"
+                    ));
+                    break;
+                }
+                mask[index] = true;
+                source.push('\n');
+                current = lines[index].as_str();
+            }
+            scripts.push(TestPlanScript::Inline {
+                source: source.trim().to_string(),
+            });
+        } else if !rest.is_empty() {
+            scripts.push(TestPlanScript::File {
+                path: rest.to_string(),
+            });
+        }
+        index += 1;
+    }
+    (scripts, mask)
 }
 
 fn is_request_line(line: &str) -> bool {
@@ -1281,7 +1854,39 @@ fn parse_name_comment(line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-fn substitute(value: &str, variables: &BTreeMap<String, String>) -> AppResult<String> {
+fn substitute_allow_unresolved(value: &str, variables: &BTreeMap<String, String>) -> String {
+    substitute_with(value, |key| {
+        variables
+            .get(key)
+            .cloned()
+            .or_else(|| dynamic_variable(key))
+    })
+}
+
+fn substitute_runtime(
+    value: &str,
+    file_variables: &BTreeMap<String, String>,
+    globals: &BTreeMap<String, Value>,
+    request_variables: &BTreeMap<String, Value>,
+) -> AppResult<String> {
+    let resolved = substitute_with(value, |key| {
+        request_variables
+            .get(key)
+            .or_else(|| globals.get(key))
+            .map(value_to_variable)
+            .or_else(|| file_variables.get(key).cloned())
+            .or_else(|| dynamic_variable(key))
+            .or_else(|| env_variable(key))
+    });
+    if let Some(unresolved) = first_unresolved_variable(&resolved) {
+        return Err(AppError::BadRequest(format!(
+            "unresolved variable {{{{{unresolved}}}}}"
+        )));
+    }
+    Ok(resolved)
+}
+
+fn substitute_with(value: &str, mut resolve: impl FnMut(&str) -> Option<String>) -> String {
     let mut output = String::with_capacity(value.len());
     let mut rest = value;
     while let Some(start) = rest.find("{{") {
@@ -1289,21 +1894,76 @@ fn substitute(value: &str, variables: &BTreeMap<String, String>) -> AppResult<St
         output.push_str(before);
         let after_start = &after_start[2..];
         let Some(end) = after_start.find("}}") else {
-            return Err(AppError::BadRequest(
-                "unterminated variable expression".into(),
-            ));
+            output.push_str("{{");
+            output.push_str(after_start);
+            return output;
         };
         let key = after_start[..end].trim();
-        let Some(replacement) = variables.get(key) else {
-            return Err(AppError::BadRequest(format!(
-                "unresolved variable {{{{{key}}}}}"
-            )));
-        };
-        output.push_str(replacement);
+        if let Some(replacement) = resolve(key) {
+            output.push_str(&replacement);
+        } else {
+            output.push_str("{{");
+            output.push_str(key);
+            output.push_str("}}");
+        }
         rest = &after_start[end + 2..];
     }
     output.push_str(rest);
-    Ok(output)
+    output
+}
+
+fn first_unresolved_variable(value: &str) -> Option<String> {
+    let start = value.find("{{")?;
+    let tail = &value[start + 2..];
+    let end = tail.find("}}")?;
+    Some(tail[..end].trim().to_string())
+}
+
+fn value_to_variable(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
+    }
+}
+
+fn dynamic_variable(key: &str) -> Option<String> {
+    match key {
+        "$uuid" | "$random.uuid" => Some(random_uuid()),
+        "$timestamp" => Some(chrono::Utc::now().timestamp().to_string()),
+        "$isoTimestamp" => Some(chrono::Utc::now().to_rfc3339()),
+        _ => None,
+    }
+}
+
+fn env_variable(key: &str) -> Option<String> {
+    let name = key.strip_prefix("$env.")?;
+    std::env::var(name).ok()
+}
+
+fn random_uuid() -> String {
+    let bytes: [u8; 16] = rand::random();
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-4{:01x}{:02x}-{:01x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6] & 0x0f,
+        bytes[7],
+        (bytes[8] & 0x3f) | 0x80,
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
 }
 
 fn collect_assertion_line(line: &str, assertions: &mut Vec<HttpAssertion>) {
@@ -1407,9 +2067,9 @@ GET {{host}}/users/1
     }
 
     #[test]
-    fn rejects_unresolved_variables() {
-        let err = parse(input("GET https://example.com/{{missing}}")).unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(_)));
+    fn preserves_unresolved_variables_for_runtime_resolution() {
+        let plan = parse(input("GET https://example.com/{{missing}}")).unwrap();
+        assert_eq!(plan.requests[0].url, "https://example.com/{{missing}}");
     }
 
     #[test]
@@ -1460,9 +2120,96 @@ GET http://{addr}/missing
         assert_eq!(report.failed, 0);
         assert_eq!(report.results[0].status, Some(200));
         assert!(report.results[0].response_preview.contains("\"ok\":true"));
+        assert_eq!(report.results[0].assertions[0].name, "ok status");
+        assert!(report.results[0].assertions[0].passed);
         assert_eq!(report.results[1].status, Some(201));
         assert_eq!(report.results[2].status, Some(404));
         assert!(report.results[2].ok);
+    }
+
+    #[tokio::test]
+    async fn pre_request_scripts_can_set_request_variables() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/users/42", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let report = execute(input(&format!(
+            r#"
+### Fetch user
+< {{%
+  request.variables.set("userId", "42");
+%}}
+
+GET http://{addr}/users/{{{{userId}}}}
+
+> {{%
+  client.log("fetched", request.url);
+  client.test("status", function () {{
+    client.assert(response.status === 200, "expected OK");
+  }});
+%}}
+"#
+        )))
+        .await
+        .unwrap();
+
+        server.abort();
+
+        assert_eq!(report.passed, 1);
+        assert_eq!(report.results[0].url, format!("http://{addr}/users/42"));
+        assert_eq!(
+            report.results[0].logs[0],
+            format!("fetched http://{addr}/users/42")
+        );
+    }
+
+    #[tokio::test]
+    async fn external_response_handler_scripts_are_resolved_from_plans_directory() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/ok", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-external-script-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        tokio::fs::create_dir_all(data_dir.join("plans").join("scripts"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            data_dir.join("plans").join("scripts").join("assert-ok.js"),
+            r#"client.test("external status", function () {
+  client.assert(response.status === 200, "expected OK");
+});
+client.log("external script ran");"#,
+        )
+        .await
+        .unwrap();
+        let store = TestPlanStore::open(&data_dir).await;
+        let plan = store
+            .create_plan(SavePlanInput {
+                name: "External script".into(),
+                content: format!("### OK\nGET http://{addr}/ok\n> scripts/assert-ok.js\n"),
+                variables: BTreeMap::new(),
+            })
+            .await
+            .unwrap();
+
+        let queued = store.enqueue_execution(&plan.id).await.unwrap();
+        store.mark_queue_running(&queued.id).await.unwrap();
+        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+
+        server.abort();
+
+        let report = store.get_execution(&execution.id).await.unwrap().report;
+        assert_eq!(report.passed, 1);
+        assert_eq!(report.results[0].assertions[0].name, "external status");
+        assert_eq!(report.results[0].logs[0], "external script ran");
     }
 
     #[tokio::test]

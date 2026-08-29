@@ -100,6 +100,21 @@ reports, and logs are saved to disk. Gate Keeper watches `data/plans/` for
 `.http` file changes and refreshes its cached plan list before serving plan
 details or starting the next execution.
 
+## Test Plan Scripting
+
+Gate Keeper executes JetBrains-style inline pre-request and response-handler
+JavaScript blocks with an embedded QuickJS runtime:
+
+- `< {% ... %}` pre-request scripts can set request variables before URL,
+  header, and body interpolation.
+- `> {% ... %}` response handlers can use `client.test`, `client.assert`,
+  `client.log`, `client.global`, `client.variables`, `request`, and `response`.
+- JSON responses are exposed as parsed `response.body`; non-JSON responses are
+  exposed as text.
+- External script files are resolved relative to `data/plans/`.
+- Unsupported features such as ES module imports and the JetBrains Crypto API
+  fail loudly instead of being silently ignored.
+
 ## API
 
 The current API keeps the original task route names while the UI presents them

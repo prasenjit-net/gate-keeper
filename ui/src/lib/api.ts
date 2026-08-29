@@ -58,8 +58,14 @@ export interface TestPlanRequest {
   url: string;
   headers: HttpHeader[];
   body?: string | null;
+  preRequestScripts: TestPlanScript[];
+  responseHandlerScripts: TestPlanScript[];
   assertions: HttpAssertion[];
 }
+
+export type TestPlanScript =
+  | { type: "inline"; source: string }
+  | { type: "file"; path: string };
 
 export interface StoredPlanSummary {
   id: string;
@@ -151,6 +157,7 @@ export interface ExecutionResult {
   responseBytes: number;
   responsePreview: string;
   error?: string | null;
+  logs: string[];
   assertions: AssertionResult[];
 }
 

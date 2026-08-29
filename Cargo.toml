@@ -20,6 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "rustls-tls"] }
 notify = "8.2.0"
+rquickjs = { version = "0.12.2", features = ["full"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
