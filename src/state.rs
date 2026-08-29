@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,6 +8,7 @@ use tokio::sync::{broadcast, RwLock};
 use crate::access_log::AccessLog;
 use crate::config::AppConfig;
 use crate::services::events::Event;
+use crate::services::http_plans::HttpPlanStore;
 use crate::services::metrics::MetricsSnapshot;
 use crate::services::tasks::TaskStore;
 
@@ -14,6 +16,7 @@ pub struct AppState {
     pub config: AppConfig,
     /// Fan-out channel feeding every connected WebSocket client.
     pub events: broadcast::Sender<Event>,
+    pub http_plans: HttpPlanStore,
     pub tasks: TaskStore,
     pub latest_metrics: RwLock<Option<MetricsSnapshot>>,
     pub requests_total: AtomicU64,
@@ -27,10 +30,16 @@ pub type SharedState = Arc<AppState>;
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Self {
+        Self::new_with_data_dir(config, "data").await
+    }
+
+    pub async fn new_with_data_dir(config: AppConfig, data_dir: impl Into<PathBuf>) -> Self {
         let (events, _) = broadcast::channel(64);
         let access_log = AccessLog::open(config.logging.access_log.as_deref()).await;
+        let http_plans = HttpPlanStore::open(data_dir).await;
         Self {
             events,
+            http_plans,
             tasks: TaskStore::with_examples(),
             latest_metrics: RwLock::new(None),
             requests_total: AtomicU64::new(0),

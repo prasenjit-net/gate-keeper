@@ -5,13 +5,20 @@ import ThemeToggle from "./ThemeToggle";
 
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
+  "/http-plans": "HTTP Plans",
+  "/execution-queue": "Execution Queue",
+  "/executions": "Executions",
   "/components": "Test Lab",
   "/settings": "Settings",
 };
 
 export default function Topbar({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation();
-  const title = TITLES[pathname] ?? "Not found";
+  const title = pathname.startsWith("/http-plans/")
+    ? "HTTP Plan Detail"
+    : pathname.startsWith("/executions/")
+      ? "Execution Report"
+      : (TITLES[pathname] ?? "Not found");
   return (
     <header className="sticky top-0 z-30 flex h-[60px] items-center gap-3 border-b border-line bg-canvas/80 px-4 backdrop-blur-md md:px-6">
       <button className="icon-btn" onClick={onMenu} aria-label="Toggle sidebar">

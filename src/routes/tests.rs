@@ -3,6 +3,7 @@
 //! `tower::ServiceExt::oneshot`, the same way `axum::serve` would.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -18,8 +19,15 @@ use crate::state::AppState;
 
 async fn test_app() -> Router {
     // AppConfig::default() has no access_log path, so tests never touch disk.
-    let state = Arc::new(AppState::new(AppConfig::default()).await);
+    let state = Arc::new(AppState::new_with_data_dir(AppConfig::default(), test_data_dir()).await);
     crate::routes::router(state)
+}
+
+fn test_data_dir() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "gate-keeper-test-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
 }
 
 /// The access-log middleware extracts `ConnectInfo<SocketAddr>`, which
@@ -117,6 +125,123 @@ async fn create_task_then_list_reflects_it() {
         .unwrap();
     let body = body_json(list).await;
     assert_eq!(body.as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn preview_http_plan_returns_parsed_requests() {
+    let app = test_app().await;
+    let res = app
+        .oneshot(json_request(
+            Method::POST,
+            "/api/http-plans/preview",
+            serde_json::json!({
+                "name": "Smoke",
+                "content": "@host = http://127.0.0.1:8080\n\n### Health\nGET {{host}}/api/health\n",
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    assert_eq!(body["name"], "Smoke");
+    assert_eq!(body["requests"][0]["name"], "Health");
+    assert_eq!(body["requests"][0]["method"], "GET");
+    assert_eq!(
+        body["requests"][0]["url"],
+        "http://127.0.0.1:8080/api/health"
+    );
+}
+
+#[tokio::test]
+async fn http_plan_crud_persists_parsed_plan() {
+    let app = test_app().await;
+    let create = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/http-plans",
+            serde_json::json!({
+                "name": "Smoke",
+                "content": "@host = http://127.0.0.1:8080\n\n### Health\nGET {{host}}/api/health\n",
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let created = body_json(create).await;
+    let id = created["id"].as_str().unwrap();
+    assert_eq!(created["name"], "Smoke");
+    assert_eq!(created["parsed"]["requests"].as_array().unwrap().len(), 1);
+
+    let list = app
+        .clone()
+        .oneshot(request(Method::GET, "/api/http-plans"))
+        .await
+        .unwrap();
+    let listed = body_json(list).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["requestCount"], 1);
+
+    let update = app
+        .clone()
+        .oneshot(json_request(
+            Method::PUT,
+            &format!("/api/http-plans/{id}"),
+            serde_json::json!({
+                "name": "Updated",
+                "content": "### Missing\nGET http://127.0.0.1:8080/api/missing\n",
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(update.status(), StatusCode::OK);
+    assert_eq!(body_json(update).await["name"], "Updated");
+
+    let delete = app
+        .oneshot(request(Method::DELETE, &format!("/api/http-plans/{id}")))
+        .await
+        .unwrap();
+    assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn execute_http_plan_enqueues_a_run() {
+    let app = test_app().await;
+    let create = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/http-plans",
+            serde_json::json!({
+                "name": "Queue me",
+                "content": "### Health\nGET http://127.0.0.1:9/api/health\n",
+            }),
+        ))
+        .await
+        .unwrap();
+    let created = body_json(create).await;
+    let plan_id = created["id"].as_str().unwrap();
+
+    let queued = app
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            &format!("/api/http-plans/{plan_id}/execute"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(queued.status(), StatusCode::ACCEPTED);
+    let body = body_json(queued).await;
+    assert_eq!(body["planId"], plan_id);
+    assert!(["queued", "running", "error"].contains(&body["status"].as_str().unwrap()));
+
+    let queue = app
+        .oneshot(request(Method::GET, "/api/execution-queue"))
+        .await
+        .unwrap();
+    assert_eq!(queue.status(), StatusCode::OK);
+    assert!(body_json(queue).await.is_array());
 }
 
 #[tokio::test]

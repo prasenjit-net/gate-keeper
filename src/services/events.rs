@@ -1,12 +1,13 @@
 use serde::Serialize;
 
+use crate::services::http_plans::ExecutionQueueItem;
 use crate::services::metrics::MetricsSnapshot;
 
 /// Server-push events delivered to every WebSocket client as JSON,
 /// discriminated by a `type` field, e.g.:
 ///
 /// ```json
-/// { "type": "activity", "kind": "task", "message": "…", "timestampMs": 0 }
+/// { "type": "activity", "kind": "test-plan", "message": "…", "timestampMs": 0 }
 /// ```
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -19,6 +20,10 @@ pub enum Event {
 
     Metrics {
         data: MetricsSnapshot,
+    },
+
+    Queue {
+        data: ExecutionQueueItem,
     },
 
     #[serde(rename_all = "camelCase")]

@@ -12,8 +12,10 @@
     "test:watch": "cross-env NODE_OPTIONS=--no-experimental-webstorage vitest"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "^1.170.18",
+    "monaco-editor": "^0.56.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

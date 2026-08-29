@@ -32,6 +32,133 @@ export interface Task {
   createdAt: string;
 }
 
+export interface HttpPlanInput {
+  name?: string;
+  content: string;
+  variables?: Record<string, string>;
+}
+
+export interface SavePlanInput {
+  name: string;
+  content: string;
+  variables?: Record<string, string>;
+}
+
+export interface HttpPlan {
+  name: string;
+  variables: Record<string, string>;
+  requests: HttpPlanRequest[];
+  warnings: string[];
+}
+
+export interface HttpPlanRequest {
+  id: number;
+  name: string;
+  method: string;
+  url: string;
+  headers: HttpHeader[];
+  body?: string | null;
+  assertions: HttpAssertion[];
+}
+
+export interface StoredPlanSummary {
+  id: string;
+  name: string;
+  requestCount: number;
+  warningCount: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface StoredPlan {
+  id: string;
+  name: string;
+  content: string;
+  parsed: HttpPlan;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface HttpHeader {
+  name: string;
+  value: string;
+}
+
+export interface HttpAssertion {
+  name: string;
+  kind: { type: "statusEquals"; expected: number };
+}
+
+export interface ExecutionReport {
+  id: string;
+  planId: string;
+  planName: string;
+  startedAtMs: number;
+  finishedAtMs: number;
+  durationMs: number;
+  total: number;
+  passed: number;
+  failed: number;
+  results: ExecutionResult[];
+}
+
+export interface ExecutionSummary {
+  id: string;
+  planId: string;
+  planName: string;
+  startedAtMs: number;
+  finishedAtMs: number;
+  durationMs: number;
+  total: number;
+  passed: number;
+  failed: number;
+  reportPath: string;
+  logPath: string;
+}
+
+export type QueueStatus = "queued" | "running" | "passed" | "failed" | "error";
+
+export interface ExecutionQueueItem {
+  id: string;
+  planId: string;
+  planName: string;
+  status: QueueStatus;
+  queuedAtMs: number;
+  startedAtMs?: number | null;
+  finishedAtMs?: number | null;
+  total?: number | null;
+  passed?: number | null;
+  failed?: number | null;
+  error?: string | null;
+  reportPath?: string | null;
+  logPath?: string | null;
+}
+
+export interface StoredExecution extends ExecutionSummary {
+  report: ExecutionReport;
+  log: string;
+}
+
+export interface ExecutionResult {
+  id: number;
+  name: string;
+  method: string;
+  url: string;
+  status?: number | null;
+  ok: boolean;
+  durationMs: number;
+  responseBytes: number;
+  responsePreview: string;
+  error?: string | null;
+  assertions: AssertionResult[];
+}
+
+export interface AssertionResult {
+  name: string;
+  passed: boolean;
+  message: string;
+}
+
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
@@ -86,6 +213,34 @@ export const api = {
   config: () => request<ServerConfig>("/api/config"),
   health: () => request<{ status: string; version: string }>("/api/health"),
   metrics: () => request<Metrics>("/api/metrics"),
+  previewHttpPlan: (input: HttpPlanInput) =>
+    request<HttpPlan>("/api/http-plans/preview", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  listHttpPlans: () => request<StoredPlanSummary[]>("/api/http-plans"),
+  createHttpPlan: (input: SavePlanInput) =>
+    request<StoredPlan>("/api/http-plans", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getHttpPlan: (id: string) => request<StoredPlan>(`/api/http-plans/${id}`),
+  updateHttpPlan: (id: string, input: SavePlanInput) =>
+    request<StoredPlan>(`/api/http-plans/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  deleteHttpPlan: (id: string) =>
+    request<void>(`/api/http-plans/${id}`, { method: "DELETE" }),
+  executeHttpPlan: (id: string) =>
+    request<ExecutionQueueItem>(`/api/http-plans/${id}/execute`, {
+      method: "POST",
+    }),
+  listExecutions: () => request<ExecutionSummary[]>("/api/executions"),
+  listExecutionQueue: () => request<ExecutionQueueItem[]>("/api/execution-queue"),
+  getExecution: (id: string) => request<StoredExecution>(`/api/executions/${id}`),
+  deleteExecution: (id: string) =>
+    request<void>(`/api/executions/${id}`, { method: "DELETE" }),
   listTasks: () => request<Task[]>("/api/tasks"),
   createTask: (title: string) =>
     request<Task>("/api/tasks", { method: "POST", body: JSON.stringify({ title }) }),

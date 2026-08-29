@@ -83,6 +83,18 @@ Runtime config defaults to `config.toml`.
 
 If the config file is missing, built-in defaults are used with a warning.
 
+## Data Storage
+
+Gate Keeper stores runtime data in the local `data/` folder:
+
+- `data/plans/index.json` contains saved HTTP plans and their parsed previews.
+- `data/executions/index.json` contains saved execution summaries.
+- `data/reports/<execution-id>.json` contains each full execution report.
+- `data/reports/<execution-id>.log` contains the plain-text execution log.
+
+Execution queue status is intentionally in-memory. Completed execution summaries,
+reports, and logs are saved to disk.
+
 ## API
 
 The current API keeps the original task route names while the UI presents them
@@ -94,6 +106,17 @@ case storage and execution history.
 | GET | `/api/health` | Liveness + version |
 | GET | `/api/config` | UI bootstrap config |
 | GET | `/api/metrics` | Latest runner metrics snapshot |
+| POST | `/api/http-plans/preview` | Parse a JetBrains-style `.http` plan without executing it |
+| GET | `/api/http-plans` | List saved HTTP plans |
+| POST | `/api/http-plans` | Save a new HTTP plan |
+| GET | `/api/http-plans/{id}` | Get a saved HTTP plan detail |
+| PUT | `/api/http-plans/{id}` | Update a saved HTTP plan |
+| DELETE | `/api/http-plans/{id}` | Delete a saved HTTP plan |
+| POST | `/api/http-plans/{id}/execute` | Queue a saved HTTP plan for asynchronous execution |
+| GET | `/api/executions` | List saved execution reports |
+| GET | `/api/execution-queue` | List queued and running execution status |
+| GET | `/api/executions/{id}` | View a saved execution report and log |
+| DELETE | `/api/executions/{id}` | Delete a saved execution report and log |
 | GET | `/api/tasks` | List test cases |
 | POST | `/api/tasks` | Create (`{"title": "GET /users/{id} returns 200"}`; empty title -> 400) |
 | POST | `/api/tasks/{id}/toggle` | Mark executed or reopen |

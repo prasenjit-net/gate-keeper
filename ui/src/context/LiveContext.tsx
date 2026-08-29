@@ -15,7 +15,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Metrics } from "../lib/api";
+import type { ExecutionQueueItem, Metrics } from "../lib/api";
 import { useToast } from "./ToastContext";
 
 export interface Activity {
@@ -31,11 +31,13 @@ interface LiveContextValue {
   metrics: Metrics | null;
   history: Metrics[];
   activities: Activity[];
+  queue: ExecutionQueueItem[];
 }
 
 type ServerEvent =
   | { type: "hello"; message: string; timestampMs: number }
   | { type: "metrics"; data: Metrics }
+  | { type: "queue"; data: ExecutionQueueItem }
   | { type: "activity"; kind: string; message: string; timestampMs: number };
 
 const HISTORY_LIMIT = 90; // ~3 minutes at one snapshot per 2s
@@ -49,6 +51,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [history, setHistory] = useState<Metrics[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [queue, setQueue] = useState<ExecutionQueueItem[]>([]);
   const wasOnline = useRef(false);
   const pushRef = useRef(push);
   pushRef.current = push;
@@ -95,6 +98,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
             message: event.message,
             timestampMs: event.timestampMs,
           });
+        } else if (event.type === "queue") {
+          setQueue((current) => {
+            const next = current.some((item) => item.id === event.data.id)
+              ? current.map((item) => (item.id === event.data.id ? event.data : item))
+              : [event.data, ...current];
+            return next.sort((a, b) => b.queuedAtMs - a.queuedAtMs).slice(0, 100);
+          });
         } else if (event.type === "hello") {
           prepend({
             kind: "socket",
@@ -127,7 +137,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <LiveContext.Provider value={{ status, metrics, history, activities }}>
+    <LiveContext.Provider value={{ status, metrics, history, activities, queue }}>
       {children}
     </LiveContext.Provider>
   );

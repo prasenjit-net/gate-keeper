@@ -6,6 +6,11 @@ import { createRootRoute, createRoute, createRouter } from "@tanstack/react-rout
 import Layout from "./components/Layout";
 import ComponentsPage from "./pages/Components";
 import DashboardPage from "./pages/Dashboard";
+import ExecutionDetailPage from "./pages/ExecutionDetail";
+import ExecutionQueuePage from "./pages/ExecutionQueue";
+import ExecutionsPage from "./pages/Executions";
+import HttpPlanDetailPage from "./pages/HttpPlanDetail";
+import HttpPlansPage from "./pages/HttpPlans";
 import NotFoundPage from "./pages/NotFound";
 import SettingsPage from "./pages/Settings";
 
@@ -25,13 +30,52 @@ const componentsRoute = createRoute({
   component: ComponentsPage,
 });
 
+const httpPlansRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/http-plans",
+  component: HttpPlansPage,
+});
+
+const httpPlanDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/http-plans/$planId",
+  component: HttpPlanDetailPage,
+});
+
+const executionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/executions",
+  component: ExecutionsPage,
+});
+
+const executionQueueRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/execution-queue",
+  component: ExecutionQueuePage,
+});
+
+const executionDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/executions/$executionId",
+  component: ExecutionDetailPage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
   component: SettingsPage,
 });
 
-const routeTree = rootRoute.addChildren([dashboardRoute, componentsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([
+  dashboardRoute,
+  httpPlansRoute,
+  httpPlanDetailRoute,
+  executionQueueRoute,
+  executionsRoute,
+  executionDetailRoute,
+  componentsRoute,
+  settingsRoute,
+]);
 
 export const router = createRouter({
   routeTree,
