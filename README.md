@@ -87,8 +87,9 @@ If the config file is missing, built-in defaults are used with a warning.
 
 Gate Keeper stores runtime data in the local `data/` folder:
 
-- `data/plans/<plan-id>.json` contains one saved test plan per file, including
-  the original script and parsed preview.
+- `data/plans/<plan-id>.http` contains one saved test plan per file as raw
+  JetBrains-style `.http` script text. Plans are parsed only when loaded,
+  previewed, or executed.
 - `data/executions/index.json` contains saved execution summaries.
 - `data/reports/<execution-id>.json` contains each full execution report.
 - `data/reports/<execution-id>.log` contains the plain-text execution log.

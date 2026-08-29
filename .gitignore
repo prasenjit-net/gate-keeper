@@ -2,5 +2,8 @@
 ui/node_modules
 ui/dist
 access.log
-data/
+/data/*
+!/data/plans/
+/data/plans/*
+!/data/plans/*.http
 .DS_Store

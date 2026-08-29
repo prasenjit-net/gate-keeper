@@ -196,7 +196,9 @@ async fn test_plan_crud_persists_parsed_plan() {
         .await
         .unwrap();
     assert_eq!(update.status(), StatusCode::OK);
-    assert_eq!(body_json(update).await["name"], "Updated");
+    let updated = body_json(update).await;
+    assert_eq!(updated["name"], "Updated");
+    let id = updated["id"].as_str().unwrap();
 
     let delete = app
         .oneshot(request(Method::DELETE, &format!("/api/test-plans/{id}")))

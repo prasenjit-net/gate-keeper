@@ -33,6 +33,9 @@ export default function TestPlanDetailPage() {
       queryClient.setQueryData(["test-plan", planId], plan);
       queryClient.invalidateQueries({ queryKey: ["test-plans"] });
       push("success", `Updated ${plan.name}.`);
+      if (plan.id !== planId) {
+        navigate({ to: "/test-plans/$planId", params: { planId: plan.id }, replace: true });
+      }
     },
     onError: notifyError,
   });

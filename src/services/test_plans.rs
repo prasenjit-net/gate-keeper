@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use std::time::SystemTime;
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method};
 use reqwest::Url;
@@ -160,12 +161,6 @@ pub struct StoredExecution {
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PlansIndex {
-    plans: Vec<StoredPlan>,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct ExecutionsIndex {
     executions: Vec<ExecutionSummary>,
 }
@@ -258,11 +253,14 @@ impl TestPlanStore {
     }
 
     pub async fn create_plan(&self, input: SavePlanInput) -> AppResult<StoredPlan> {
-        let parsed = parse(save_input_to_plan_input(&input))?;
         let now = chrono::Utc::now().timestamp_millis();
+        let id = self.unique_plan_id(&input.name).await;
+        persist_plan_content(&self.data_dir, &id, &input.content).await?;
+        let name = clean_plan_name(&input.name);
+        let parsed = parse_for_display(&name, &input.content, &input.variables);
         let plan = StoredPlan {
-            id: self.next_id("plan"),
-            name: parsed.name.clone(),
+            id,
+            name,
             content: input.content,
             parsed,
             created_at_ms: now,
@@ -271,23 +269,44 @@ impl TestPlanStore {
 
         let mut plans = self.plans.write().await;
         plans.push(plan.clone());
-        persist_plan(&self.data_dir, &plan).await?;
         Ok(plan)
     }
 
     pub async fn update_plan(&self, id: &str, input: SavePlanInput) -> AppResult<StoredPlan> {
-        let parsed = parse(save_input_to_plan_input(&input))?;
         let mut plans = self.plans.write().await;
-        let plan = plans
+        let index = plans
             .iter_mut()
-            .find(|plan| plan.id == id)
+            .position(|plan| plan.id == id)
             .ok_or_else(|| AppError::NotFound(format!("test plan {id} does not exist")))?;
-        plan.name = parsed.name.clone();
-        plan.content = input.content;
-        plan.parsed = parsed;
-        plan.updated_at_ms = chrono::Utc::now().timestamp_millis();
-        let saved = plan.clone();
-        persist_plan(&self.data_dir, &saved).await?;
+        let name = clean_plan_name(&input.name);
+        let current_id = plans[index].id.clone();
+        let next_id = if name == plans[index].name {
+            current_id.clone()
+        } else {
+            unique_plan_id_for(
+                &self.data_dir,
+                &plans,
+                &name,
+                Some(&current_id),
+                &self.counter,
+            )
+        };
+
+        persist_plan_content(&self.data_dir, &next_id, &input.content).await?;
+        if next_id != current_id {
+            remove_plan_file(&self.data_dir, &current_id).await?;
+        }
+
+        let parsed = parse_for_display(&name, &input.content, &input.variables);
+        plans[index] = StoredPlan {
+            id: next_id,
+            name,
+            content: input.content,
+            parsed,
+            created_at_ms: plans[index].created_at_ms,
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
+        };
+        let saved = plans[index].clone();
         Ok(saved)
     }
 
@@ -387,7 +406,12 @@ impl TestPlanStore {
         plan: &StoredPlan,
         execution_id: String,
     ) -> AppResult<StoredExecution> {
-        let report = run_plan(&plan.id, &plan.parsed, execution_id).await?;
+        let parsed = parse(TestPlanInput {
+            name: Some(plan.name.clone()),
+            content: plan.content.clone(),
+            variables: BTreeMap::new(),
+        })?;
+        let report = run_plan(&plan.id, &parsed, execution_id).await?;
         let log = execution_log(&report);
         let report_path = self
             .data_dir
@@ -505,6 +529,11 @@ impl TestPlanStore {
         let next = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}-{}-{next}", chrono::Utc::now().timestamp_millis())
     }
+
+    async fn unique_plan_id(&self, name: &str) -> String {
+        let plans = self.plans.read().await;
+        unique_plan_id_for(&self.data_dir, &plans, name, None, &self.counter)
+    }
 }
 
 impl QueueStatus {
@@ -514,14 +543,6 @@ impl QueueStatus {
         } else {
             QueueStatus::Failed
         }
-    }
-}
-
-fn save_input_to_plan_input(input: &SavePlanInput) -> TestPlanInput {
-    TestPlanInput {
-        name: Some(input.name.clone()),
-        content: input.content.clone(),
-        variables: input.variables.clone(),
     }
 }
 
@@ -536,6 +557,90 @@ fn plan_summary(plan: &StoredPlan) -> StoredPlanSummary {
     }
 }
 
+fn parse_for_display(name: &str, content: &str, variables: &BTreeMap<String, String>) -> TestPlan {
+    match parse(TestPlanInput {
+        name: Some(name.to_string()),
+        content: content.to_string(),
+        variables: variables.clone(),
+    }) {
+        Ok(plan) => plan,
+        Err(err) => TestPlan {
+            name: name.to_string(),
+            variables: variables.clone(),
+            requests: Vec::new(),
+            warnings: vec![err.to_string()],
+        },
+    }
+}
+
+fn clean_plan_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        "Untitled test plan".into()
+    } else {
+        trimmed.into()
+    }
+}
+
+fn plan_name_from_id(id: &str) -> String {
+    clean_plan_name(&id.replace(['-', '_'], " "))
+}
+
+fn slugify_plan_name(name: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for character in clean_plan_name(name).chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        "untitled-test-plan".into()
+    } else {
+        slug
+    }
+}
+
+fn plan_id_exists(plans: &[StoredPlan], id: &str, excluding: Option<&str>) -> bool {
+    plans
+        .iter()
+        .any(|plan| Some(plan.id.as_str()) != excluding && plan.id == id)
+}
+
+fn unique_plan_id_for(
+    data_dir: &Path,
+    plans: &[StoredPlan],
+    name: &str,
+    excluding: Option<&str>,
+    counter: &AtomicU64,
+) -> String {
+    let base = slugify_plan_name(name);
+    if !plan_id_exists(plans, &base, excluding) && !plan_file_path(data_dir, &base).exists() {
+        return base;
+    }
+
+    loop {
+        let candidate = format!("{base}-{}", counter.fetch_add(1, Ordering::Relaxed));
+        if !plan_id_exists(plans, &candidate, excluding)
+            && !plan_file_path(data_dir, &candidate).exists()
+        {
+            return candidate;
+        }
+    }
+}
+
+fn system_time_to_timestamp_ms(time: SystemTime) -> Option<i64> {
+    let duration = time.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    i64::try_from(duration.as_millis()).ok()
+}
+
 async fn load_plans(data_dir: &Path) -> Vec<StoredPlan> {
     let mut plans = Vec::new();
     let plans_dir = data_dir.join("plans");
@@ -547,7 +652,7 @@ async fn load_plans(data_dir: &Path) -> Vec<StoredPlan> {
                     if !is_plan_file(&path) {
                         continue;
                     }
-                    match read_json::<StoredPlan>(&path).await {
+                    match load_plan_file(&path).await {
                         Ok(plan) => plans.push(plan),
                         Err(err) => {
                             tracing::warn!("failed to load test plan {}: {err}", path.display());
@@ -565,45 +670,64 @@ async fn load_plans(data_dir: &Path) -> Vec<StoredPlan> {
         Err(err) => tracing::warn!("failed to read test plan data directory: {err}"),
     }
 
-    if plans.is_empty() {
-        match read_json::<PlansIndex>(&plans_index_path(data_dir)).await {
-            Ok(index) => {
-                for plan in &index.plans {
-                    if let Err(err) = persist_plan(data_dir, plan).await {
-                        tracing::warn!("failed to migrate test plan {}: {err}", plan.id);
-                    }
-                }
-                plans = index.plans;
-            }
-            Err(AppError::Internal(message)) if message.starts_with("failed to parse ") => {
-                tracing::warn!("{message}");
-            }
-            Err(_) => {}
-        }
-    }
-
     plans
 }
 
 fn is_plan_file(path: &Path) -> bool {
-    path.extension().and_then(|extension| extension.to_str()) == Some("json")
-        && path.file_name().and_then(|name| name.to_str()) != Some("index.json")
-}
-
-fn plans_index_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("plans").join("index.json")
+    path.extension().and_then(|extension| extension.to_str()) == Some("http")
 }
 
 fn plan_file_path(data_dir: &Path, id: &str) -> PathBuf {
-    data_dir.join("plans").join(format!("{id}.json"))
+    data_dir.join("plans").join(format!("{id}.http"))
 }
 
 fn executions_index_path(data_dir: &Path) -> PathBuf {
     data_dir.join("executions").join("index.json")
 }
 
-async fn persist_plan(data_dir: &Path, plan: &StoredPlan) -> AppResult<()> {
-    write_json(&plan_file_path(data_dir, &plan.id), plan).await
+async fn load_plan_file(path: &Path) -> AppResult<StoredPlan> {
+    let content = tokio::fs::read_to_string(path)
+        .await
+        .map_err(AppError::from)?;
+    let metadata = tokio::fs::metadata(path).await.map_err(AppError::from)?;
+    let updated_at_ms = metadata
+        .modified()
+        .ok()
+        .and_then(system_time_to_timestamp_ms)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let created_at_ms = metadata
+        .created()
+        .ok()
+        .and_then(system_time_to_timestamp_ms)
+        .unwrap_or(updated_at_ms);
+    let id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| AppError::Internal(format!("invalid test plan path {}", path.display())))?
+        .to_string();
+    let name = plan_name_from_id(&id);
+    let parsed = parse_for_display(&name, &content, &BTreeMap::new());
+
+    Ok(StoredPlan {
+        id,
+        name,
+        content,
+        parsed,
+        created_at_ms,
+        updated_at_ms,
+    })
+}
+
+async fn persist_plan_content(data_dir: &Path, id: &str, content: &str) -> AppResult<()> {
+    let path = plan_file_path(data_dir, id);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(AppError::from)?;
+    }
+    tokio::fs::write(path, content)
+        .await
+        .map_err(AppError::from)
 }
 
 async fn remove_plan_file(data_dir: &Path, id: &str) -> AppResult<()> {
@@ -1315,7 +1439,7 @@ GET http://{addr}/missing
     }
 
     #[tokio::test]
-    async fn store_saves_each_test_plan_as_its_own_file() {
+    async fn store_saves_each_test_plan_as_its_own_http_file() {
         let data_dir = std::env::temp_dir().join(format!(
             "gate-keeper-plan-file-test-{}",
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
@@ -1329,12 +1453,15 @@ GET http://{addr}/missing
             })
             .await
             .unwrap();
-        let plan_path = data_dir.join("plans").join(format!("{}.json", plan.id));
+        let plan_path = data_dir.join("plans").join(format!("{}.http", plan.id));
 
         assert!(plan_path.exists());
-        assert!(!data_dir.join("plans").join("index.json").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(&plan_path).await.unwrap(),
+            "### OK\nGET http://127.0.0.1:8080/ok\n"
+        );
 
-        store
+        let updated = store
             .update_plan(
                 &plan.id,
                 SavePlanInput {
@@ -1345,10 +1472,14 @@ GET http://{addr}/missing
             )
             .await
             .unwrap();
-        let saved = read_json::<StoredPlan>(&plan_path).await.unwrap();
-        assert_eq!(saved.name, "Updated file backed");
-
-        store.delete_plan(&plan.id).await.unwrap();
+        let updated_path = data_dir.join("plans").join(format!("{}.http", updated.id));
         assert!(!plan_path.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(&updated_path).await.unwrap(),
+            "### Missing\nGET http://127.0.0.1:8080/missing\n"
+        );
+
+        store.delete_plan(&updated.id).await.unwrap();
+        assert!(!updated_path.exists());
     }
 }
