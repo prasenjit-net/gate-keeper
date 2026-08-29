@@ -216,10 +216,7 @@ impl TestPlanStore {
             tracing::warn!("failed to create report data directory: {err}");
         }
 
-        let plans = read_json::<PlansIndex>(&plans_index_path(&data_dir))
-            .await
-            .map(|index| index.plans)
-            .unwrap_or_default();
+        let plans = load_plans(&data_dir).await;
         let executions = read_json::<ExecutionsIndex>(&executions_index_path(&data_dir))
             .await
             .map(|index| index.executions)
@@ -274,7 +271,7 @@ impl TestPlanStore {
 
         let mut plans = self.plans.write().await;
         plans.push(plan.clone());
-        persist_plans(&self.data_dir, &plans).await?;
+        persist_plan(&self.data_dir, &plan).await?;
         Ok(plan)
     }
 
@@ -290,7 +287,7 @@ impl TestPlanStore {
         plan.parsed = parsed;
         plan.updated_at_ms = chrono::Utc::now().timestamp_millis();
         let saved = plan.clone();
-        persist_plans(&self.data_dir, &plans).await?;
+        persist_plan(&self.data_dir, &saved).await?;
         Ok(saved)
     }
 
@@ -300,8 +297,8 @@ impl TestPlanStore {
             .iter()
             .position(|plan| plan.id == id)
             .ok_or_else(|| AppError::NotFound(format!("test plan {id} does not exist")))?;
-        plans.remove(index);
-        persist_plans(&self.data_dir, &plans).await
+        let plan = plans.remove(index);
+        remove_plan_file(&self.data_dir, &plan.id).await
     }
 
     pub async fn enqueue_execution(&self, plan_id: &str) -> AppResult<ExecutionQueueItem> {
@@ -539,22 +536,82 @@ fn plan_summary(plan: &StoredPlan) -> StoredPlanSummary {
     }
 }
 
+async fn load_plans(data_dir: &Path) -> Vec<StoredPlan> {
+    let mut plans = Vec::new();
+    let plans_dir = data_dir.join("plans");
+    match tokio::fs::read_dir(&plans_dir).await {
+        Ok(mut entries) => loop {
+            match entries.next_entry().await {
+                Ok(Some(entry)) => {
+                    let path = entry.path();
+                    if !is_plan_file(&path) {
+                        continue;
+                    }
+                    match read_json::<StoredPlan>(&path).await {
+                        Ok(plan) => plans.push(plan),
+                        Err(err) => {
+                            tracing::warn!("failed to load test plan {}: {err}", path.display());
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    tracing::warn!("failed to read test plan data directory: {err}");
+                    break;
+                }
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => tracing::warn!("failed to read test plan data directory: {err}"),
+    }
+
+    if plans.is_empty() {
+        match read_json::<PlansIndex>(&plans_index_path(data_dir)).await {
+            Ok(index) => {
+                for plan in &index.plans {
+                    if let Err(err) = persist_plan(data_dir, plan).await {
+                        tracing::warn!("failed to migrate test plan {}: {err}", plan.id);
+                    }
+                }
+                plans = index.plans;
+            }
+            Err(AppError::Internal(message)) if message.starts_with("failed to parse ") => {
+                tracing::warn!("{message}");
+            }
+            Err(_) => {}
+        }
+    }
+
+    plans
+}
+
+fn is_plan_file(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("json")
+        && path.file_name().and_then(|name| name.to_str()) != Some("index.json")
+}
+
 fn plans_index_path(data_dir: &Path) -> PathBuf {
     data_dir.join("plans").join("index.json")
+}
+
+fn plan_file_path(data_dir: &Path, id: &str) -> PathBuf {
+    data_dir.join("plans").join(format!("{id}.json"))
 }
 
 fn executions_index_path(data_dir: &Path) -> PathBuf {
     data_dir.join("executions").join("index.json")
 }
 
-async fn persist_plans(data_dir: &Path, plans: &[StoredPlan]) -> AppResult<()> {
-    write_json(
-        &plans_index_path(data_dir),
-        &PlansIndex {
-            plans: plans.to_vec(),
-        },
-    )
-    .await
+async fn persist_plan(data_dir: &Path, plan: &StoredPlan) -> AppResult<()> {
+    write_json(&plan_file_path(data_dir, &plan.id), plan).await
+}
+
+async fn remove_plan_file(data_dir: &Path, id: &str) -> AppResult<()> {
+    match tokio::fs::remove_file(plan_file_path(data_dir, id)).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(AppError::from(err)),
+    }
 }
 
 async fn persist_executions(data_dir: &Path, executions: &[ExecutionSummary]) -> AppResult<()> {
@@ -1255,5 +1312,43 @@ GET http://{addr}/missing
             .exists());
         assert_eq!(store.list_executions().await.len(), 1);
         assert!(store.list_queue().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn store_saves_each_test_plan_as_its_own_file() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-plan-file-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = TestPlanStore::open(&data_dir).await;
+        let plan = store
+            .create_plan(SavePlanInput {
+                name: "File backed".into(),
+                content: "### OK\nGET http://127.0.0.1:8080/ok\n".into(),
+                variables: BTreeMap::new(),
+            })
+            .await
+            .unwrap();
+        let plan_path = data_dir.join("plans").join(format!("{}.json", plan.id));
+
+        assert!(plan_path.exists());
+        assert!(!data_dir.join("plans").join("index.json").exists());
+
+        store
+            .update_plan(
+                &plan.id,
+                SavePlanInput {
+                    name: "Updated file backed".into(),
+                    content: "### Missing\nGET http://127.0.0.1:8080/missing\n".into(),
+                    variables: BTreeMap::new(),
+                },
+            )
+            .await
+            .unwrap();
+        let saved = read_json::<StoredPlan>(&plan_path).await.unwrap();
+        assert_eq!(saved.name, "Updated file backed");
+
+        store.delete_plan(&plan.id).await.unwrap();
+        assert!(!plan_path.exists());
     }
 }
