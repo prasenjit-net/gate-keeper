@@ -17,6 +17,23 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/config", get(api::config))
         .route("/api/metrics", get(api::metrics))
         .route("/api/test-plans/preview", post(api::preview_test_plan))
+        .route("/api/test-plan-browser", get(api::browse_test_plans))
+        .route(
+            "/api/test-plan-folders",
+            post(api::create_test_plan_folder)
+                .put(api::rename_test_plan_folder)
+                .delete(api::delete_test_plan_folder),
+        )
+        .route(
+            "/api/test-plans/by-path",
+            get(api::get_test_plan_by_path)
+                .put(api::update_test_plan_by_path)
+                .delete(api::delete_test_plan_by_path),
+        )
+        .route(
+            "/api/test-plans/by-path/execute",
+            post(api::execute_test_plan_by_path),
+        )
         .route(
             "/api/test-plans",
             get(api::list_test_plans).post(api::create_test_plan),

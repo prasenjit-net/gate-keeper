@@ -71,8 +71,8 @@ export default function ExecutionDetailPage() {
         <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
           <Link
             className="btn btn-secondary"
-            to="/test-plans/$planId"
-            params={{ planId: execution.planId }}
+            to="/test-plans"
+            search={{ dir: parentPath(execution.planPath), plan: execution.planPath }}
           >
             Open plan
           </Link>
@@ -97,4 +97,10 @@ export default function ExecutionDetailPage() {
       </section>
     </div>
   );
+}
+
+function parentPath(path: string): string {
+  const parts = path.split("/");
+  parts.pop();
+  return parts.join("/");
 }

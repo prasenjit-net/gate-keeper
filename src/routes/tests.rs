@@ -171,7 +171,7 @@ async fn test_plan_crud_persists_parsed_plan() {
     assert_eq!(create.status(), StatusCode::CREATED);
     let created = body_json(create).await;
     let id = created["id"].as_str().unwrap();
-    assert_eq!(created["name"], "Smoke");
+    assert_eq!(created["name"], "smoke");
     assert_eq!(created["parsed"]["requests"].as_array().unwrap().len(), 1);
 
     let list = app
@@ -197,7 +197,7 @@ async fn test_plan_crud_persists_parsed_plan() {
         .unwrap();
     assert_eq!(update.status(), StatusCode::OK);
     let updated = body_json(update).await;
-    assert_eq!(updated["name"], "Updated");
+    assert_eq!(updated["name"], "smoke");
     let id = updated["id"].as_str().unwrap();
 
     let delete = app

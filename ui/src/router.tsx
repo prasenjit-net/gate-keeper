@@ -33,12 +33,19 @@ const componentsRoute = createRoute({
 const testPlansRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/test-plans",
+  validateSearch: (search: Record<string, unknown>) => ({
+    dir: typeof search.dir === "string" ? search.dir : "",
+    plan: typeof search.plan === "string" ? search.plan : undefined,
+  }),
   component: TestPlansPage,
 });
 
-const testPlanDetailRoute = createRoute({
+const testPlanEditRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/test-plans/$planId",
+  path: "/test-plans/edit",
+  validateSearch: (search: Record<string, unknown>) => ({
+    path: typeof search.path === "string" ? search.path : "",
+  }),
   component: TestPlanDetailPage,
 });
 
@@ -69,7 +76,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   testPlansRoute,
-  testPlanDetailRoute,
+  testPlanEditRoute,
   executionQueueRoute,
   executionsRoute,
   executionDetailRoute,

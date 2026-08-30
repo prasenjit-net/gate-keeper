@@ -23,7 +23,7 @@ pub enum Event {
     },
 
     Queue {
-        data: ExecutionQueueItem,
+        data: Box<ExecutionQueueItem>,
     },
 
     #[serde(rename_all = "camelCase")]

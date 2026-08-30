@@ -74,6 +74,35 @@ export const IconX = icon(<path d="m6 6 12 12M18 6 6 18" />);
 
 export const IconPlus = icon(<path d="M12 5v14M5 12h14" />);
 
+export const IconFolder = icon(
+  <>
+    <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2.5h6A2.5 2.5 0 0 1 20.5 10v7A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17V7.5z" />
+  </>,
+);
+
+export const IconFolderPlus = icon(
+  <>
+    <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2.5h6A2.5 2.5 0 0 1 20.5 10v7A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17V7.5z" />
+    <path d="M12 11v5M9.5 13.5h5" />
+  </>,
+);
+
+export const IconFile = icon(
+  <>
+    <path d="M7 3.5h6l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z" />
+    <path d="M13 3.5V8h4" />
+  </>,
+);
+
+export const IconPencil = icon(
+  <>
+    <path d="M4 20h4.5L19 9.5 14.5 5 4 15.5V20z" />
+    <path d="m13.5 6 4.5 4.5" />
+  </>,
+);
+
+export const IconChevronLeft = icon(<path d="m15 5-7 7 7 7" />);
+
 export const IconTrash = icon(
   <>
     <path d="M4 7h16" />

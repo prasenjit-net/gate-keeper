@@ -76,7 +76,11 @@ function QueueItem({ item }: { item: ExecutionQueueItem }) {
       </div>
       {item.error ? <p className="mt-2 text-sm text-err">{item.error}</p> : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link className="btn btn-secondary btn-sm" to="/test-plans/$planId" params={{ planId: item.planId }}>
+        <Link
+          className="btn btn-secondary btn-sm"
+          to="/test-plans"
+          search={{ dir: parentPath(item.planPath), plan: item.planPath }}
+        >
           Open plan
         </Link>
         {complete ? (
@@ -91,4 +95,10 @@ function QueueItem({ item }: { item: ExecutionQueueItem }) {
       </div>
     </li>
   );
+}
+
+function parentPath(path: string): string {
+  const parts = path.split("/");
+  parts.pop();
+  return parts.join("/");
 }

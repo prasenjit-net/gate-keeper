@@ -15,7 +15,7 @@ const TITLES: Record<string, string> = {
 export default function Topbar({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation();
   const title = pathname.startsWith("/test-plans/")
-    ? "Test Plan Detail"
+    ? "Test Plan Editor"
     : pathname.startsWith("/executions/")
       ? "Execution Report"
       : (TITLES[pathname] ?? "Not found");

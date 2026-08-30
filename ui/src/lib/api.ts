@@ -41,6 +41,7 @@ export interface TestPlanInput {
 export interface SavePlanInput {
   name: string;
   content: string;
+  directory?: string | null;
   variables?: Record<string, string>;
 }
 
@@ -70,6 +71,7 @@ export type TestPlanScript =
 export interface StoredPlanSummary {
   id: string;
   name: string;
+  path: string;
   requestCount: number;
   warningCount: number;
   createdAtMs: number;
@@ -79,6 +81,7 @@ export interface StoredPlanSummary {
 export interface StoredPlan {
   id: string;
   name: string;
+  path: string;
   content: string;
   parsed: TestPlan;
   createdAtMs: number;
@@ -98,6 +101,7 @@ export interface HttpAssertion {
 export interface ExecutionReport {
   id: string;
   planId: string;
+  planPath: string;
   planName: string;
   script: string;
   startedAtMs: number;
@@ -112,6 +116,7 @@ export interface ExecutionReport {
 export interface ExecutionSummary {
   id: string;
   planId: string;
+  planPath: string;
   planName: string;
   startedAtMs: number;
   finishedAtMs: number;
@@ -128,6 +133,7 @@ export type QueueStatus = "queued" | "running" | "passed" | "failed" | "error";
 export interface ExecutionQueueItem {
   id: string;
   planId: string;
+  planPath: string;
   planName: string;
   status: QueueStatus;
   queuedAtMs: number;
@@ -144,6 +150,24 @@ export interface ExecutionQueueItem {
 export interface StoredExecution extends ExecutionSummary {
   report: ExecutionReport;
   log: string;
+}
+
+export type TestPlanBrowserEntryKind = "directory" | "file";
+
+export interface TestPlanBrowserEntry {
+  name: string;
+  path: string;
+  kind: TestPlanBrowserEntryKind;
+  updatedAtMs?: number | null;
+  requestCount?: number | null;
+  warningCount?: number | null;
+}
+
+export interface TestPlanBrowser {
+  path: string;
+  name: string;
+  parent?: string | null;
+  entries: TestPlanBrowserEntry[];
 }
 
 export interface ExecutionResult {
@@ -217,6 +241,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function query(params: Record<string, string | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      search.set(key, value);
+    }
+  }
+  const raw = search.toString();
+  return raw ? `?${raw}` : "";
+}
+
 export const api = {
   config: () => request<ServerConfig>("/api/config"),
   health: () => request<{ status: string; version: string }>("/api/health"),
@@ -227,21 +262,48 @@ export const api = {
       body: JSON.stringify(input),
     }),
   listTestPlans: () => request<StoredPlanSummary[]>("/api/test-plans"),
+  browseTestPlans: (path?: string) =>
+    request<TestPlanBrowser>(`/api/test-plan-browser${query({ path })}`),
   createTestPlan: (input: SavePlanInput) =>
     request<StoredPlan>("/api/test-plans", {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  createTestPlanFolder: (path: string) =>
+    request<void>("/api/test-plan-folders", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  renameTestPlanFolder: (path: string, name: string) =>
+    request<void>("/api/test-plan-folders", {
+      method: "PUT",
+      body: JSON.stringify({ path, name }),
+    }),
+  deleteTestPlanFolder: (path: string) =>
+    request<void>(`/api/test-plan-folders${query({ path })}`, { method: "DELETE" }),
   getTestPlan: (id: string) => request<StoredPlan>(`/api/test-plans/${id}`),
+  getTestPlanByPath: (path: string) =>
+    request<StoredPlan>(`/api/test-plans/by-path${query({ path })}`),
   updateTestPlan: (id: string, input: SavePlanInput) =>
     request<StoredPlan>(`/api/test-plans/${id}`, {
       method: "PUT",
       body: JSON.stringify(input),
     }),
+  updateTestPlanByPath: (path: string, input: SavePlanInput) =>
+    request<StoredPlan>(`/api/test-plans/by-path${query({ path })}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
   deleteTestPlan: (id: string) =>
     request<void>(`/api/test-plans/${id}`, { method: "DELETE" }),
+  deleteTestPlanByPath: (path: string) =>
+    request<void>(`/api/test-plans/by-path${query({ path })}`, { method: "DELETE" }),
   executeTestPlan: (id: string) =>
     request<ExecutionQueueItem>(`/api/test-plans/${id}/execute`, {
+      method: "POST",
+    }),
+  executeTestPlanByPath: (path: string) =>
+    request<ExecutionQueueItem>(`/api/test-plans/by-path/execute${query({ path })}`, {
       method: "POST",
     }),
   listExecutions: () => request<ExecutionSummary[]>("/api/executions"),

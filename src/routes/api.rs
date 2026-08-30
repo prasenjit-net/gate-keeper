@@ -10,8 +10,8 @@ use crate::services::events::Event;
 use crate::services::metrics::MetricsSnapshot;
 use crate::services::tasks::{NewTask, Task};
 use crate::services::test_plans::{
-    self, ExecutionQueueItem, ExecutionSummary, SavePlanInput, StoredExecution, StoredPlan,
-    StoredPlanSummary, TestPlan, TestPlanInput,
+    self, ExecutionQueueItem, ExecutionSummary, FolderInput, RenameFolderInput, SavePlanInput,
+    StoredExecution, StoredPlan, StoredPlanSummary, TestPlan, TestPlanBrowser, TestPlanInput,
 };
 use crate::state::SharedState;
 
@@ -46,6 +46,30 @@ pub async fn list_test_plans(State(state): State<SharedState>) -> Json<Vec<Store
     Json(state.test_plans.list_plans().await)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserQuery {
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanPathQuery {
+    path: String,
+}
+
+pub async fn browse_test_plans(
+    State(state): State<SharedState>,
+    Query(query): Query<BrowserQuery>,
+) -> AppResult<Json<TestPlanBrowser>> {
+    state
+        .test_plans
+        .browse(query.path.as_deref())
+        .await
+        .map(Json)
+}
+
 pub async fn create_test_plan(
     State(state): State<SharedState>,
     Json(body): Json<SavePlanInput>,
@@ -62,12 +86,33 @@ pub async fn get_test_plan(
     state.test_plans.get_plan(&id).await.map(Json)
 }
 
+pub async fn get_test_plan_by_path(
+    State(state): State<SharedState>,
+    Query(query): Query<PlanPathQuery>,
+) -> AppResult<Json<StoredPlan>> {
+    state
+        .test_plans
+        .get_plan_by_path(&query.path)
+        .await
+        .map(Json)
+}
+
 pub async fn update_test_plan(
     State(state): State<SharedState>,
     Path(id): Path<String>,
     Json(body): Json<SavePlanInput>,
 ) -> AppResult<Json<StoredPlan>> {
     let plan = state.test_plans.update_plan(&id, body).await?;
+    state.activity("test-plan", format!("Updated test plan \"{}\"", plan.name));
+    Ok(Json(plan))
+}
+
+pub async fn update_test_plan_by_path(
+    State(state): State<SharedState>,
+    Query(query): Query<PlanPathQuery>,
+    Json(body): Json<SavePlanInput>,
+) -> AppResult<Json<StoredPlan>> {
+    let plan = state.test_plans.update_plan(&query.path, body).await?;
     state.activity("test-plan", format!("Updated test plan \"{}\"", plan.name));
     Ok(Json(plan))
 }
@@ -81,12 +126,66 @@ pub async fn delete_test_plan(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn delete_test_plan_by_path(
+    State(state): State<SharedState>,
+    Query(query): Query<PlanPathQuery>,
+) -> AppResult<StatusCode> {
+    state.test_plans.delete_plan(&query.path).await?;
+    state.activity("test-plan", format!("Deleted test plan {}", query.path));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn create_test_plan_folder(
+    State(state): State<SharedState>,
+    Json(body): Json<FolderInput>,
+) -> AppResult<StatusCode> {
+    state.test_plans.create_folder(&body.path).await?;
+    state.activity("test-plan", format!("Created folder {}", body.path));
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn rename_test_plan_folder(
+    State(state): State<SharedState>,
+    Json(body): Json<RenameFolderInput>,
+) -> AppResult<StatusCode> {
+    let path = body.path.clone();
+    let name = body.name.clone();
+    state.test_plans.rename_folder(body).await?;
+    state.activity("test-plan", format!("Renamed folder {path} to {name}"));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_test_plan_folder(
+    State(state): State<SharedState>,
+    Query(query): Query<PlanPathQuery>,
+) -> AppResult<StatusCode> {
+    state.test_plans.delete_folder(&query.path).await?;
+    state.activity("test-plan", format!("Deleted folder {}", query.path));
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn execute_test_plan(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> AppResult<(StatusCode, Json<ExecutionQueueItem>)> {
-    let item = state.test_plans.enqueue_execution(&id).await?;
-    state.broadcast(Event::Queue { data: item.clone() });
+    enqueue_execution(state, &id).await
+}
+
+pub async fn execute_test_plan_by_path(
+    State(state): State<SharedState>,
+    Query(query): Query<PlanPathQuery>,
+) -> AppResult<(StatusCode, Json<ExecutionQueueItem>)> {
+    enqueue_execution(state, &query.path).await
+}
+
+async fn enqueue_execution(
+    state: SharedState,
+    plan_id: &str,
+) -> AppResult<(StatusCode, Json<ExecutionQueueItem>)> {
+    let item = state.test_plans.enqueue_execution(plan_id).await?;
+    state.broadcast(Event::Queue {
+        data: Box::new(item.clone()),
+    });
     state.activity(
         "test-run",
         format!("Queued \"{}\" for execution", item.plan_name),
@@ -130,7 +229,9 @@ pub async fn delete_execution(
 async fn run_queued_execution(state: SharedState, queue_id: String) {
     match state.test_plans.mark_queue_running(&queue_id).await {
         Ok(item) => {
-            state.broadcast(Event::Queue { data: item.clone() });
+            state.broadcast(Event::Queue {
+                data: Box::new(item.clone()),
+            });
             state.activity(
                 "test-run",
                 format!("Started \"{}\" execution", item.plan_name),
@@ -144,7 +245,9 @@ async fn run_queued_execution(state: SharedState, queue_id: String) {
 
     match state.test_plans.run_queued_execution(&queue_id).await {
         Ok(item) => {
-            state.broadcast(Event::Queue { data: item.clone() });
+            state.broadcast(Event::Queue {
+                data: Box::new(item.clone()),
+            });
             let outcome = match item.status {
                 test_plans::QueueStatus::Passed => "passed",
                 test_plans::QueueStatus::Failed => "failed",
