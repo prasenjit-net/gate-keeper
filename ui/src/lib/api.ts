@@ -238,7 +238,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) {
     return undefined as T;
   }
-  return (await res.json()) as T;
+  const raw = await res.text();
+  if (!raw.trim()) {
+    return undefined as T;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new ApiError("INVALID_RESPONSE", res.status, "Server returned invalid JSON");
+  }
 }
 
 function query(params: Record<string, string | undefined | null>): string {

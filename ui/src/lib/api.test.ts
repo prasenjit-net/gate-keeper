@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "./api";
 
+function mockJsonFetchOnce(body: unknown, response: Partial<Response> = {}) {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify(body)),
+    ...response,
+  } as Response);
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 function mockFetchOnce(response: Partial<Response> & { json?: () => Promise<unknown> }) {
   const fetchMock = vi.fn().mockResolvedValue(response as Response);
   vi.stubGlobal("fetch", fetchMock);
@@ -13,11 +24,7 @@ afterEach(() => {
 
 describe("api client", () => {
   it("returns parsed JSON on a successful response", async () => {
-    mockFetchOnce({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ status: "ok", version: "0.1.0" }),
-    });
+    mockJsonFetchOnce({ status: "ok", version: "0.1.0" });
     const result = await api.health();
     expect(result).toEqual({ status: "ok", version: "0.1.0" });
   });
@@ -25,6 +32,12 @@ describe("api client", () => {
   it("returns undefined for a 204 No Content response", async () => {
     mockFetchOnce({ ok: true, status: 204, json: () => Promise.reject("no body") });
     const result = await api.deleteTask(1);
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for an empty successful response", async () => {
+    mockFetchOnce({ ok: true, status: 201, text: () => Promise.resolve("") });
+    const result = await api.createTestPlanFolder("test");
     expect(result).toBeUndefined();
   });
 
