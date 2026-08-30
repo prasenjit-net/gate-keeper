@@ -134,7 +134,7 @@ export default function TestPlanDetailPage() {
             value={content}
             onChange={setContent}
             ariaLabel="test plan editor"
-            height="100%"
+            height="max(520px, calc(100vh - 246px))"
           />
         </div>
       </section>
