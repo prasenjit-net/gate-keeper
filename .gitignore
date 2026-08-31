@@ -3,4 +3,7 @@ ui/node_modules
 ui/dist
 access.log
 data/
+.env
+.env.*
+!.env.example
 .DS_Store
