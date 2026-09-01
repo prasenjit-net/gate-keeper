@@ -2,7 +2,7 @@
   "name": "gate-keeper-ui",
   "description": "HTTP REST API test case designer and executor UI",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
