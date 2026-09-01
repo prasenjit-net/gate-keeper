@@ -233,7 +233,7 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={uploadMutation.isPending}>
+          <button type="submit" className="btn btn-primary" disabled={uploadMutation.isPending}>
             <IconUpload size={16} /> Upload
           </button>
         </div>

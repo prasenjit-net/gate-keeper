@@ -338,7 +338,7 @@ impl TestPlanStore {
     pub async fn list_plans(&self) -> Vec<StoredPlanSummary> {
         self.refresh_plans_if_dirty().await;
         let mut plans: Vec<_> = self.plans.read().await.iter().map(plan_summary).collect();
-        plans.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+        plans.sort_by_key(|a| std::cmp::Reverse(a.updated_at_ms));
         plans
     }
 
@@ -577,7 +577,7 @@ impl TestPlanStore {
             .filter(|item| matches!(item.status, QueueStatus::Queued | QueueStatus::Running))
             .cloned()
             .collect();
-        queue.sort_by(|a, b| b.queued_at_ms.cmp(&a.queued_at_ms));
+        queue.sort_by_key(|a| std::cmp::Reverse(a.queued_at_ms));
         queue
     }
 
@@ -713,7 +713,7 @@ impl TestPlanStore {
 
     pub async fn list_executions(&self) -> Vec<ExecutionSummary> {
         let mut executions = self.executions.read().await.clone();
-        executions.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+        executions.sort_by_key(|a| std::cmp::Reverse(a.started_at_ms));
         executions
     }
 

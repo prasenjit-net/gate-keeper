@@ -14,67 +14,20 @@ const COMMON_HEADERS = [
 
 const CONTENT_TYPES = ["application/json", "application/xml", "text/plain", "text/html"];
 
-const SCRIPT_COMPLETIONS = [
-  {
-    label: "client.test",
-    detail: "Define an assertion test",
-    insertText: 'client.test("${1:name}", () => {\n  ${2}\n});',
-  },
-  {
-    label: "client.assert",
-    detail: "Assert a condition",
-    insertText: 'client.assert(${1:condition}, "${2:message}");',
-  },
-  {
-    label: "client.log",
-    detail: "Add a script log entry",
-    insertText: "client.log(${1:value});",
-  },
-  {
-    label: "client.variables.get",
-    detail: "Read request, global, or file variable",
-    insertText: 'client.variables.get("${1:name}")',
-  },
-  {
-    label: "client.variables.set",
-    detail: "Set a request variable",
-    insertText: 'client.variables.set("${1:name}", ${2:value});',
-  },
-  {
-    label: "client.variables.file.get",
-    detail: "Read a file-level @ variable",
-    insertText: 'client.variables.file.get("${1:name}")',
-  },
-  {
-    label: "request.url",
-    detail: "Resolved request URL",
-    insertText: "request.url",
-  },
-  {
-    label: "request.method",
-    detail: "Request method",
-    insertText: "request.method",
-  },
-  {
-    label: "response.status",
-    detail: "HTTP response status",
-    insertText: "response.status",
-  },
-  {
-    label: "response.body",
-    detail: "Parsed JSON body or text body",
-    insertText: "response.body",
-  },
-  {
-    label: "response.bodyText",
-    detail: "Raw response body text",
-    insertText: "response.bodyText",
-  },
-  {
-    label: "console.log",
-    detail: "Add a console log entry",
-    insertText: "console.log(${1:value});",
-  },
+// [label, detail, insertText] — kept as tuples so the table stays compact.
+const SCRIPT_COMPLETIONS: ReadonlyArray<readonly [string, string, string]> = [
+  ["client.test", "Define an assertion test", 'client.test("${1:name}", () => {\n  ${2}\n});'],
+  ["client.assert", "Assert a condition", 'client.assert(${1:condition}, "${2:message}");'],
+  ["client.log", "Add a script log entry", "client.log(${1:value});"],
+  ["client.variables.get", "Read request, global, or file variable", 'client.variables.get("${1:name}")'],
+  ["client.variables.set", "Set a request variable", 'client.variables.set("${1:name}", ${2:value});'],
+  ["client.variables.file.get", "Read a file-level @ variable", 'client.variables.file.get("${1:name}")'],
+  ["request.url", "Resolved request URL", "request.url"],
+  ["request.method", "Request method", "request.method"],
+  ["response.status", "HTTP response status", "response.status"],
+  ["response.body", "Parsed JSON body or text body", "response.body"],
+  ["response.bodyText", "Raw response body text", "response.bodyText"],
+  ["console.log", "Add a console log entry", "console.log(${1:value});"],
 ];
 
 export interface CompletionSpec {
@@ -156,48 +109,65 @@ export function registerHttpPlanLanguage(monaco: typeof Monaco) {
   );
 }
 
-export function defineHttpPlanThemes(monaco: typeof Monaco) {
-  monaco.editor.defineTheme("gate-keeper-light", {
-    base: "vs",
-    inherit: true,
-    rules: [
-      { token: "keyword", foreground: "0d7d59", fontStyle: "bold" },
-      { token: "variable", foreground: "3f63e0" },
-      { token: "variable.predefined", foreground: "9c7215" },
-      { token: "attribute.name", foreground: "5d5a70" },
-      { token: "string", foreground: "17825c" },
-      { token: "comment", foreground: "8f8ca1", fontStyle: "italic" },
-    ],
-    colors: {
-      "editor.background": "#ffffff",
-      "editor.foreground": "#2b2938",
-      "editorLineNumber.foreground": "#8f8ca1",
-      "editorCursor.foreground": "#0d7d59",
-      "editor.selectionBackground": "#d8f5e8",
-      "editor.lineHighlightBackground": "#f1f0f3",
-    },
-  });
+// Token rules and editor colors are shared between both themes; only the hex
+// values differ, so each theme just supplies value lists in these orders.
+const THEME_TOKENS: ReadonlyArray<readonly [token: string, fontStyle?: string]> = [
+  ["keyword", "bold"],
+  ["variable"],
+  ["variable.predefined"],
+  ["attribute.name"],
+  ["string"],
+  ["comment", "italic"],
+];
 
-  monaco.editor.defineTheme("gate-keeper-dark", {
+const THEME_COLOR_KEYS = [
+  "editor.background",
+  "editor.foreground",
+  "editorLineNumber.foreground",
+  "editorCursor.foreground",
+  "editor.selectionBackground",
+  "editor.lineHighlightBackground",
+] as const;
+
+const HTTP_PLAN_THEMES: ReadonlyArray<{
+  name: string;
+  base: "vs" | "vs-dark";
+  foregrounds: readonly string[];
+  colors: readonly string[];
+}> = [
+  {
+    name: "gate-keeper-light",
+    base: "vs",
+    foregrounds: ["0d7d59", "3f63e0", "9c7215", "5d5a70", "17825c", "8f8ca1"],
+    colors: ["#ffffff", "#2b2938", "#8f8ca1", "#0d7d59", "#d8f5e8", "#f1f0f3"],
+  },
+  {
+    name: "gate-keeper-dark",
     base: "vs-dark",
-    inherit: true,
-    rules: [
-      { token: "keyword", foreground: "28e99f", fontStyle: "bold" },
-      { token: "variable", foreground: "8ba4ff" },
-      { token: "variable.predefined", foreground: "dfb35c" },
-      { token: "attribute.name", foreground: "a5a1b8" },
-      { token: "string", foreground: "5fce97" },
-      { token: "comment", foreground: "757088", fontStyle: "italic" },
-    ],
-    colors: {
-      "editor.background": "#1d1b26",
-      "editor.foreground": "#eae8f2",
-      "editorLineNumber.foreground": "#757088",
-      "editorCursor.foreground": "#28e99f",
-      "editor.selectionBackground": "#164836",
-      "editor.lineHighlightBackground": "#272432",
-    },
-  });
+    foregrounds: ["28e99f", "8ba4ff", "dfb35c", "a5a1b8", "5fce97", "757088"],
+    colors: ["#1d1b26", "#eae8f2", "#757088", "#28e99f", "#164836", "#272432"],
+  },
+];
+
+export function defineHttpPlanThemes(monaco: typeof Monaco) {
+  for (const theme of HTTP_PLAN_THEMES) {
+    const rules = THEME_TOKENS.map(([token, fontStyle], index) => {
+      const rule: Monaco.editor.ITokenThemeRule = {
+        token,
+        foreground: theme.foregrounds[index],
+      };
+      if (fontStyle) rule.fontStyle = fontStyle;
+      return rule;
+    });
+    monaco.editor.defineTheme(theme.name, {
+      base: theme.base,
+      inherit: true,
+      rules,
+      colors: Object.fromEntries(
+        THEME_COLOR_KEYS.map((key, index) => [key, theme.colors[index]]),
+      ),
+    });
+  }
 }
 
 export function extractHttpPlanVariables(content: string): string[] {
@@ -284,8 +254,10 @@ export function httpPlanCompletions(content: string, lineNumber: number, column:
 
 function scriptCompletions(variables: string[]): CompletionSpec[] {
   return [
-    ...SCRIPT_COMPLETIONS.map((completion) => ({
-      ...completion,
+    ...SCRIPT_COMPLETIONS.map(([label, detail, insertText]) => ({
+      label,
+      detail,
+      insertText,
       kind: "snippet" as const,
     })),
     ...variables.map((variable) => ({

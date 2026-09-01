@@ -254,20 +254,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers as Record<string, string> | undefined),
-      },
-    });
-  } catch {
-    throw new ApiError("NETWORK", 0, "Cannot reach the server");
-  }
-
+async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     // Prefer the backend's { error: { code, message } } envelope.
     let code = `HTTP_${res.status}`;
@@ -300,6 +287,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+  } catch {
+    throw new ApiError("NETWORK", 0, "Cannot reach the server");
+  }
+  return parseResponse<T>(res);
+}
+
 async function requestForm<T>(path: string, form: FormData, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -311,36 +314,7 @@ async function requestForm<T>(path: string, form: FormData, init?: RequestInit):
   } catch {
     throw new ApiError("NETWORK", 0, "Cannot reach the server");
   }
-
-  if (!res.ok) {
-    let code = `HTTP_${res.status}`;
-    let message = res.statusText || "Request failed";
-    try {
-      const body = (await res.json()) as {
-        error?: { code?: string; message?: string };
-      };
-      if (body.error) {
-        code = body.error.code ?? code;
-        message = body.error.message ?? message;
-      }
-    } catch {
-      /* body was not JSON — keep the status text */
-    }
-    throw new ApiError(code, res.status, message);
-  }
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  const raw = await res.text();
-  if (!raw.trim()) {
-    return undefined as T;
-  }
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    throw new ApiError("INVALID_RESPONSE", res.status, "Server returned invalid JSON");
-  }
+  return parseResponse<T>(res);
 }
 
 function query(params: Record<string, string | undefined | null>): string {

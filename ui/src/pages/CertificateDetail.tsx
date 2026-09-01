@@ -171,7 +171,7 @@ export default function CertificateDetailPage() {
             >
               Cancel
             </button>
-            <button className="btn btn-primary" disabled={updateMutation.isPending}>
+            <button type="submit" className="btn btn-primary" disabled={updateMutation.isPending}>
               <IconCheck size={16} /> Save
             </button>
           </div>
