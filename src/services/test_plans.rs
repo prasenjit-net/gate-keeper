@@ -1703,9 +1703,12 @@ async fn execute_one(
                 match run_js_script(
                     "pre-request",
                     &source,
-                    request,
-                    &executable_request,
-                    None,
+                    ScriptExecutionContext {
+                        plan_request: request,
+                        executable_request: &executable_request,
+                        response: None,
+                        file_variables,
+                    },
                     globals,
                     &mut request_variables,
                 ) {
@@ -1889,9 +1892,12 @@ async fn execute_one(
                                 match run_js_script(
                                     "response handler",
                                     &source,
-                                    request,
-                                    &executable_request,
-                                    Some(&script_response),
+                                    ScriptExecutionContext {
+                                        plan_request: request,
+                                        executable_request: &executable_request,
+                                        response: Some(&script_response),
+                                        file_variables,
+                                    },
                                     globals,
                                     &mut request_variables,
                                 ) {
@@ -2003,9 +2009,7 @@ struct ExecutionArtifacts {
 fn run_js_script(
     phase: &str,
     source: &str,
-    plan_request: &TestPlanRequest,
-    executable_request: &ExecutableRequest,
-    response: Option<&ScriptResponse>,
+    context: ScriptExecutionContext<'_>,
     globals: &mut BTreeMap<String, Value>,
     request_variables: &mut BTreeMap<String, Value>,
 ) -> Result<ScriptOutcome, String> {
@@ -2013,19 +2017,11 @@ fn run_js_script(
     let runtime = Runtime::new().map_err(|err| format!("failed to create JS runtime: {err}"))?;
     runtime.set_memory_limit(8 * 1024 * 1024);
     runtime.set_max_stack_size(256 * 1024);
-    let context =
+    let js_context =
         Context::full(&runtime).map_err(|err| format!("failed to create JS context: {err}"))?;
 
-    context.with(|ctx| {
-        let source = build_script_source(
-            phase,
-            source,
-            plan_request,
-            executable_request,
-            response,
-            globals,
-            request_variables,
-        )?;
+    js_context.with(|ctx| {
+        let source = build_script_source(phase, source, context, globals, request_variables)?;
         let raw = ctx
             .eval::<String, _>(source)
             .map_err(|err| format!("{phase} script failed: {err}"))?;
@@ -2035,6 +2031,13 @@ fn run_js_script(
         *request_variables = outcome.request_variables.clone();
         Ok(outcome)
     })
+}
+
+struct ScriptExecutionContext<'a> {
+    plan_request: &'a TestPlanRequest,
+    executable_request: &'a ExecutableRequest,
+    response: Option<&'a ScriptResponse>,
+    file_variables: &'a BTreeMap<String, String>,
 }
 
 fn reject_unsupported_script_features(source: &str) -> Result<(), String> {
@@ -2051,26 +2054,33 @@ fn reject_unsupported_script_features(source: &str) -> Result<(), String> {
 fn build_script_source(
     phase: &str,
     user_source: &str,
-    plan_request: &TestPlanRequest,
-    executable_request: &ExecutableRequest,
-    response: Option<&ScriptResponse>,
+    context: ScriptExecutionContext<'_>,
     globals: &BTreeMap<String, Value>,
     request_variables: &BTreeMap<String, Value>,
 ) -> Result<String, String> {
     let request_json = serde_json::to_string(&json!({
-        "id": plan_request.id,
-        "name": plan_request.name,
-        "method": executable_request.method,
-        "url": executable_request.url,
-        "headers": headers_to_map(&executable_request.headers),
-        "body": executable_request.body,
+        "id": context.plan_request.id,
+        "name": context.plan_request.name,
+        "method": context.executable_request.method,
+        "url": context.executable_request.url,
+        "headers": headers_to_map(&context.executable_request.headers),
+        "body": context.executable_request.body,
     }))
     .map_err(|err| err.to_string())?;
-    let response_json = serde_json::to_string(&response).map_err(|err| err.to_string())?;
+    let response_json = serde_json::to_string(&context.response).map_err(|err| err.to_string())?;
     let globals_json = serde_json::to_string(globals).map_err(|err| err.to_string())?;
+    let file_variables_json =
+        serde_json::to_string(context.file_variables).map_err(|err| err.to_string())?;
     let request_variables_json =
         serde_json::to_string(request_variables).map_err(|err| err.to_string())?;
-    let source_json = serde_json::to_string(user_source).map_err(|err| err.to_string())?;
+    let source = substitute_runtime(
+        user_source,
+        context.file_variables,
+        globals,
+        request_variables,
+    )
+    .map_err(|err| err.to_string())?;
+    let source_json = serde_json::to_string(&source).map_err(|err| err.to_string())?;
     let phase_json = serde_json::to_string(phase).map_err(|err| err.to_string())?;
 
     Ok(format!(
@@ -2080,6 +2090,7 @@ fn build_script_source(
     tests: [],
     logs: [],
     errors: [],
+    fileVariables: {file_variables_json},
     globals: {globals_json},
     requestVariables: {request_variables_json}
   }};
@@ -2117,7 +2128,7 @@ fn build_script_source(
   }});
   const __globalScope = __scope(__gk.globals);
   const __requestScope = __scope(__gk.requestVariables);
-  const __fileScope = __scope({{}});
+  const __fileScope = __scope(__gk.fileVariables);
   const __environmentScope = __scope({{}});
   let __testDepth = 0;
   const client = {{
@@ -2161,6 +2172,7 @@ fn build_script_source(
       get(name) {{
         if (Object.prototype.hasOwnProperty.call(__gk.requestVariables, String(name))) return __gk.requestVariables[String(name)];
         if (Object.prototype.hasOwnProperty.call(__gk.globals, String(name))) return __gk.globals[String(name)];
+        if (Object.prototype.hasOwnProperty.call(__gk.fileVariables, String(name))) return __gk.fileVariables[String(name)];
         return null;
       }},
       set(name, value) {{
@@ -2943,6 +2955,48 @@ GET http://{addr}/ok
         let execution_log = execution_log(&report);
         assert!(execution_log.contains(&format!("log: plain http://{addr}/ok")));
         assert!(execution_log.contains(r#"log: [error] failed-ish {"status":200}"#));
+    }
+
+    #[tokio::test]
+    async fn file_variables_are_available_in_inline_scripts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/users/7", get(|| async { Json(json!({ "id": 7 })) }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let report = execute(input(&format!(
+            r#"
+@host = http://{addr}
+@userId = 7
+
+### Get user
+GET {{{{host}}}}/users/{{{{userId}}}}
+
+> {{%
+  client.test("interpolated variable", () => {{
+    const expected = Number("{{{{userId}}}}");
+    client.assert(response.body.id === expected, `expected ${{expected}}`);
+  }});
+  client.test("file variable scope", () => {{
+    const expected = Number(client.variables.get("userId"));
+    client.assert(response.body.id === expected, `expected ${{expected}}`);
+  }});
+%}}
+"#
+        )))
+        .await
+        .unwrap();
+
+        server.abort();
+
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.results[0].assertions.len(), 2);
+        assert!(report.results[0]
+            .assertions
+            .iter()
+            .all(|assertion| assertion.passed));
     }
 
     #[tokio::test]
