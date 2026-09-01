@@ -128,6 +128,32 @@ function ResultItem({ result }: { result: ExecutionResult }) {
             <Badge>{result.responseBytes} bytes</Badge>
           </div>
           {result.error ? <p className="mt-2 text-sm text-err">{result.error}</p> : null}
+          {(result.diagnostics ?? []).length > 0 ? (
+            <div className="mt-2 flex flex-col gap-2">
+              {(result.diagnostics ?? []).map((diagnostic, index) => (
+                <div
+                  key={`${diagnostic.phase}-${index}`}
+                  className="rounded-lg border border-err/35 bg-err-soft p-3 text-[0.78rem] text-err"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="err">{diagnostic.kind}</Badge>
+                    <span className="font-mono text-[0.7rem]">{diagnostic.phase}</span>
+                  </div>
+                  <p className="mt-2">{diagnostic.message}</p>
+                  {diagnostic.details ? (
+                    <pre className="mt-2 max-h-[120px] overflow-auto rounded-md bg-surface p-2 font-mono text-[0.7rem] whitespace-pre-wrap text-ink-muted">
+                      {diagnostic.details}
+                    </pre>
+                  ) : null}
+                  {diagnostic.sourcePreview ? (
+                    <pre className="mt-2 max-h-[160px] overflow-auto rounded-md bg-surface p-2 font-mono text-[0.7rem] whitespace-pre-wrap text-ink-muted">
+                      {diagnostic.sourcePreview}
+                    </pre>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {result.logs.length > 0 ? (
             <pre className="mt-2 max-h-[120px] overflow-auto rounded-lg bg-surface-2 p-3 font-mono text-[0.72rem] whitespace-pre-wrap text-ink-muted">
               {result.logs.join("\n")}

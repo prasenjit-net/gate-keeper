@@ -2,10 +2,11 @@ import { Link, useLocation } from "@tanstack/react-router";
 import type { ReactElement } from "react";
 import { useConfig } from "../context/ConfigContext";
 import {
-  IconActivity,
   IconDashboard,
   IconExternal,
   IconLayers,
+  IconQueue,
+  IconReport,
   IconServer,
   IconSliders,
   IconX,
@@ -21,8 +22,8 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: <IconDashboard size={20} /> },
   { to: "/test-plans", label: "Test Plans", icon: <IconServer size={20} /> },
-  { to: "/execution-queue", label: "Queue", icon: <IconActivity size={20} /> },
-  { to: "/executions", label: "Executions", icon: <IconActivity size={20} /> },
+  { to: "/execution-queue", label: "Queue", icon: <IconQueue size={20} /> },
+  { to: "/executions", label: "Executions", icon: <IconReport size={20} /> },
   { to: "/components", label: "Test Lab", icon: <IconLayers size={20} /> },
   { to: "/settings", label: "Settings", icon: <IconSliders size={20} /> },
 ];

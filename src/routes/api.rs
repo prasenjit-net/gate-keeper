@@ -226,6 +226,12 @@ pub async fn delete_execution(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn delete_all_executions(State(state): State<SharedState>) -> AppResult<StatusCode> {
+    let deleted = state.test_plans.delete_all_executions().await?;
+    state.activity("test-run", format!("Deleted {deleted} execution reports"));
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn run_queued_execution(state: SharedState, queue_id: String) {
     match state.test_plans.mark_queue_running(&queue_id).await {
         Ok(item) => {

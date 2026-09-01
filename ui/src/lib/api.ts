@@ -183,6 +183,15 @@ export interface ExecutionResult {
   error?: string | null;
   logs: string[];
   assertions: AssertionResult[];
+  diagnostics?: ExecutionDiagnostic[];
+}
+
+export interface ExecutionDiagnostic {
+  kind: string;
+  phase: string;
+  message: string;
+  details?: string | null;
+  sourcePreview?: string | null;
 }
 
 export interface AssertionResult {
@@ -319,6 +328,7 @@ export const api = {
   getExecution: (id: string) => request<StoredExecution>(`/api/executions/${id}`),
   deleteExecution: (id: string) =>
     request<void>(`/api/executions/${id}`, { method: "DELETE" }),
+  deleteAllExecutions: () => request<void>("/api/executions", { method: "DELETE" }),
   listTasks: () => request<Task[]>("/api/tasks"),
   createTask: (title: string) =>
     request<Task>("/api/tasks", { method: "POST", body: JSON.stringify({ title }) }),

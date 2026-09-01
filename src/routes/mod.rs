@@ -45,7 +45,10 @@ pub fn router(state: SharedState) -> Router {
                 .delete(api::delete_test_plan),
         )
         .route("/api/test-plans/{id}/execute", post(api::execute_test_plan))
-        .route("/api/executions", get(api::list_executions))
+        .route(
+            "/api/executions",
+            get(api::list_executions).delete(api::delete_all_executions),
+        )
         .route("/api/execution-queue", get(api::list_execution_queue))
         .route(
             "/api/executions/{id}",

@@ -5,7 +5,7 @@ import Badge from "../components/Badge";
 import { EmptyState } from "../components/TestPlanPanels";
 import StatCard from "../components/StatCard";
 import { useLive } from "../context/LiveContext";
-import { IconActivity, IconCheckCircle, IconDatabase, IconServer } from "../icons";
+import { IconCheckCircle, IconQueue, IconReport, IconServer } from "../icons";
 import { api, type ExecutionQueueItem } from "../lib/api";
 import { formatNumber, timeAgo } from "../lib/format";
 
@@ -45,14 +45,14 @@ export default function DashboardPage() {
           sub={`${formatNumber(totalRequests)} requests designed`}
         />
         <StatCard
-          icon={<IconDatabase size={18} />}
+          icon={<IconReport size={18} />}
           label="Executions"
           value={executionsQuery.data ? formatNumber(totalRuns) : "—"}
           sub={latest ? `latest ${timeAgo(latest.startedAtMs)}` : "no runs yet"}
           color="var(--chart-2)"
         />
         <StatCard
-          icon={<IconActivity size={18} />}
+          icon={<IconQueue size={18} />}
           label="Queue"
           value={queueQuery.data ? formatNumber(runningQueue.length) : "—"}
           sub="queued or running now"

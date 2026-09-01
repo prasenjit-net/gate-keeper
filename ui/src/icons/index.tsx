@@ -146,6 +146,24 @@ export const IconBolt = icon(<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />);
 
 export const IconActivity = icon(<path d="M3 12h4l2.5-7 4 14L16 12h5" />);
 
+export const IconQueue = icon(
+  <>
+    <path d="M5 6h9" />
+    <path d="M5 12h7" />
+    <path d="M5 18h5" />
+    <path d="m16 10 4 4-4 4" />
+    <path d="M12 14h8" />
+  </>,
+);
+
+export const IconReport = icon(
+  <>
+    <path d="M7 3.5h6l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z" />
+    <path d="M13 3.5V8h4" />
+    <path d="M9 13h6M9 16.5h4" />
+  </>,
+);
+
 export const IconServer = icon(
   <>
     <rect x="3" y="4" width="18" height="7" rx="2" />

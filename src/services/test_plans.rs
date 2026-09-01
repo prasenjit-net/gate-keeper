@@ -115,6 +115,18 @@ pub struct ExecutionResult {
     pub error: Option<String>,
     pub logs: Vec<String>,
     pub assertions: Vec<AssertionResult>,
+    #[serde(default)]
+    pub diagnostics: Vec<ExecutionDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionDiagnostic {
+    pub kind: String,
+    pub phase: String,
+    pub message: String,
+    pub details: Option<String>,
+    pub source_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -736,6 +748,42 @@ impl TestPlanStore {
         Ok(())
     }
 
+    pub async fn delete_all_executions(&self) -> AppResult<usize> {
+        let deleted = {
+            let mut executions = self.executions.write().await;
+            let deleted = executions.len();
+            executions.clear();
+            persist_executions(&self.data_dir, &executions).await?;
+            deleted
+        };
+
+        self.queue.write().await.clear();
+
+        let reports_dir = self.data_dir.join("reports");
+        match tokio::fs::read_dir(&reports_dir).await {
+            Ok(mut entries) => {
+                while let Some(entry) = entries.next_entry().await.map_err(AppError::from)? {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let extension = path.extension().and_then(|extension| extension.to_str());
+                    if matches!(extension, Some("json") | Some("log")) {
+                        match tokio::fs::remove_file(&path).await {
+                            Ok(()) => {}
+                            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(err) => return Err(AppError::from(err)),
+                        }
+                    }
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(AppError::from(err)),
+        }
+
+        Ok(deleted)
+    }
+
     fn next_id(&self, prefix: &str) -> String {
         let next = self.counter.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}-{}-{next}", chrono::Utc::now().timestamp_millis())
@@ -1185,6 +1233,15 @@ fn display_path(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn one_line(value: &str) -> String {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 fn id_suffix(id: &str) -> Option<u64> {
     id.rsplit('-').next()?.parse().ok()
 }
@@ -1219,6 +1276,21 @@ fn execution_log(report: &ExecutionReport) -> String {
         ));
         if let Some(error) = &result.error {
             lines.push(format!("  error: {error}"));
+        }
+        for diagnostic in &result.diagnostics {
+            lines.push(format!(
+                "  diagnostic [{}:{}]: {}",
+                diagnostic.kind, diagnostic.phase, diagnostic.message
+            ));
+            if let Some(details) = &diagnostic.details {
+                lines.push(format!("    details: {}", one_line(details)));
+            }
+            if let Some(source_preview) = &diagnostic.source_preview {
+                lines.push("    script:".into());
+                for line in source_preview.lines() {
+                    lines.push(format!("      {line}"));
+                }
+            }
         }
         for log in &result.logs {
             lines.push(format!("  log: {log}"));
@@ -1378,9 +1450,74 @@ struct ScriptOutcome {
     #[serde(default)]
     logs: Vec<String>,
     #[serde(default)]
+    errors: Vec<ScriptRuntimeError>,
+    #[serde(default)]
     globals: BTreeMap<String, Value>,
     #[serde(default)]
     request_variables: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptRuntimeError {
+    name: Option<String>,
+    message: String,
+    stack: Option<String>,
+}
+
+impl ExecutionDiagnostic {
+    fn runtime(phase: &str, message: String, source: Option<&str>) -> Self {
+        Self {
+            kind: "script".into(),
+            phase: phase.into(),
+            message,
+            details: None,
+            source_preview: source.map(script_preview),
+        }
+    }
+}
+
+fn script_diagnostic(phase: &str, source: &str, message: &str) -> ExecutionDiagnostic {
+    ExecutionDiagnostic::runtime(phase, message.to_string(), Some(source))
+}
+
+fn script_diagnostics(
+    phase: &str,
+    source: &str,
+    errors: &[ScriptRuntimeError],
+) -> Vec<ExecutionDiagnostic> {
+    errors
+        .iter()
+        .map(|error| ExecutionDiagnostic {
+            kind: error.name.clone().unwrap_or_else(|| "script".into()),
+            phase: phase.into(),
+            message: error.message.clone(),
+            details: error.stack.clone(),
+            source_preview: Some(script_preview(source)),
+        })
+        .collect()
+}
+
+fn format_script_error(phase: &str, errors: &[ScriptRuntimeError]) -> String {
+    errors
+        .first()
+        .map(|error| format!("{phase} script failed: {}", error.message))
+        .unwrap_or_else(|| format!("{phase} script failed"))
+}
+
+fn script_preview(source: &str) -> String {
+    const MAX_LINES: usize = 12;
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut preview = lines
+        .iter()
+        .take(MAX_LINES)
+        .enumerate()
+        .map(|(index, line)| format!("{:>3}: {}", index + 1, line))
+        .collect::<Vec<_>>();
+    if lines.len() > MAX_LINES {
+        preview.push("  ...".into());
+    }
+    preview.join("\n")
 }
 
 async fn execute_one(
@@ -1398,6 +1535,7 @@ async fn execute_one(
     let mut response_preview = String::new();
     let mut error = None;
     let mut request_variables = BTreeMap::new();
+    let mut diagnostics = Vec::new();
 
     let mut executable_request = ExecutableRequest {
         method: request.method.clone(),
@@ -1421,14 +1559,29 @@ async fn execute_one(
                     Ok(outcome) => {
                         logs.extend(outcome.logs);
                         assertion_results.extend(outcome.tests);
+                        if !outcome.errors.is_empty() {
+                            diagnostics.extend(script_diagnostics(
+                                "pre-request",
+                                &source,
+                                &outcome.errors,
+                            ));
+                            error = Some(format_script_error("pre-request", &outcome.errors));
+                            break;
+                        }
                     }
                     Err(err) => {
+                        diagnostics.push(script_diagnostic("pre-request", &source, &err));
                         error = Some(err);
                         break;
                     }
                 }
             }
             Err(err) => {
+                diagnostics.push(ExecutionDiagnostic::runtime(
+                    "pre-request",
+                    err.clone(),
+                    None,
+                ));
                 error = Some(err);
                 break;
             }
@@ -1461,6 +1614,7 @@ async fn execute_one(
             error: Some(error),
             logs,
             assertions: assertion_results,
+            diagnostics,
         };
     }
 
@@ -1473,6 +1627,7 @@ async fn execute_one(
                 executable_request,
                 logs,
                 assertion_results,
+                diagnostics,
                 format!("invalid method: {err}"),
             );
         }
@@ -1494,6 +1649,7 @@ async fn execute_one(
                     executable_request.clone(),
                     logs,
                     assertion_results,
+                    diagnostics,
                     format!("invalid header name {}: {err}", header.name),
                 );
             }
@@ -1504,6 +1660,7 @@ async fn execute_one(
                     executable_request.clone(),
                     logs,
                     assertion_results,
+                    diagnostics,
                     format!("invalid value for header {}: {err}", header.name),
                 );
             }
@@ -1554,14 +1711,36 @@ async fn execute_one(
                                     Ok(outcome) => {
                                         logs.extend(outcome.logs);
                                         assertion_results.extend(outcome.tests);
+                                        if !outcome.errors.is_empty() {
+                                            diagnostics.extend(script_diagnostics(
+                                                "response handler",
+                                                &source,
+                                                &outcome.errors,
+                                            ));
+                                            error = Some(format_script_error(
+                                                "response handler",
+                                                &outcome.errors,
+                                            ));
+                                            break;
+                                        }
                                     }
                                     Err(err) => {
+                                        diagnostics.push(script_diagnostic(
+                                            "response handler",
+                                            &source,
+                                            &err,
+                                        ));
                                         error = Some(err);
                                         break;
                                     }
                                 }
                             }
                             Err(err) => {
+                                diagnostics.push(ExecutionDiagnostic::runtime(
+                                    "response handler",
+                                    err.clone(),
+                                    None,
+                                ));
                                 error = Some(err);
                                 break;
                             }
@@ -1595,6 +1774,7 @@ async fn execute_one(
         error,
         logs,
         assertions: assertion_results,
+        diagnostics,
     }
 }
 
@@ -1605,6 +1785,7 @@ impl ExecutionResult {
         executable_request: ExecutableRequest,
         logs: Vec<String>,
         assertions: Vec<AssertionResult>,
+        diagnostics: Vec<ExecutionDiagnostic>,
         error: String,
     ) -> Self {
         Self {
@@ -1620,6 +1801,7 @@ impl ExecutionResult {
             error: Some(error),
             logs,
             assertions,
+            diagnostics,
         }
     }
 }
@@ -1703,6 +1885,7 @@ fn build_script_source(
   const __gk = {{
     tests: [],
     logs: [],
+    errors: [],
     globals: {globals_json},
     requestVariables: {request_variables_json}
   }};
@@ -1717,6 +1900,11 @@ fn build_script_source(
     try {{ return JSON.stringify(value); }} catch (_) {{ return String(value); }}
   }};
   const __message = (error) => error && error.message ? String(error.message) : String(error);
+  const __scriptError = (error) => ({{
+    name: error && error.name ? String(error.name) : "Error",
+    message: __message(error),
+    stack: error && error.stack ? String(error.stack) : null
+  }});
   const __scope = (bag) => ({{
     get(name) {{
       const value = bag[String(name)];
@@ -1797,6 +1985,7 @@ fn build_script_source(
     const __runner = new Function("client", "request", "response", __source);
     __runner(client, request, response);
   }} catch (error) {{
+    __gk.errors.push(__scriptError(error));
     __gk.tests.push({{
       name: `${{__phase}} script`,
       passed: false,
@@ -2473,6 +2662,49 @@ GET http://{addr}/users/{{{{userId}}}}
     }
 
     #[tokio::test]
+    async fn script_syntax_errors_are_reported_with_diagnostics() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/ok", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let report = execute(input(&format!(
+            r#"
+### Broken
+GET http://{addr}/ok
+
+> {{%
+  client.test("broken syntax", () => {{
+    client.assert(response.status === 200);
+  // missing closing braces
+%}}
+"#
+        )))
+        .await
+        .unwrap();
+
+        server.abort();
+
+        let result = &report.results[0];
+        assert!(!result.ok);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("response handler script failed"));
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].phase, "response handler");
+        assert!(result.diagnostics[0]
+            .source_preview
+            .as_deref()
+            .unwrap()
+            .contains("client.test"));
+        assert!(execution_log(&report).contains("diagnostic"));
+    }
+
+    #[tokio::test]
     async fn external_response_handler_scripts_are_resolved_from_plans_directory() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2564,6 +2796,51 @@ client.log("external script ran");"#,
             .exists());
         assert_eq!(store.list_executions().await.len(), 1);
         assert!(store.list_queue().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn store_deletes_all_execution_reports_and_logs() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/ok", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-delete-all-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = TestPlanStore::open(&data_dir).await;
+        let plan = store
+            .create_plan(SavePlanInput {
+                name: "Delete all".into(),
+                content: format!("### OK\nGET http://{addr}/ok\n"),
+                directory: None,
+                variables: BTreeMap::new(),
+            })
+            .await
+            .unwrap();
+        let queued = store.enqueue_execution(&plan.id).await.unwrap();
+        store.mark_queue_running(&queued.id).await.unwrap();
+        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+
+        server.abort();
+
+        let report_path = data_dir
+            .join("reports")
+            .join(format!("{}.json", execution.id));
+        let log_path = data_dir
+            .join("reports")
+            .join(format!("{}.log", execution.id));
+        assert!(report_path.exists());
+        assert!(log_path.exists());
+
+        let deleted = store.delete_all_executions().await.unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(store.list_executions().await.is_empty());
+        assert!(!report_path.exists());
+        assert!(!log_path.exists());
     }
 
     #[tokio::test]
