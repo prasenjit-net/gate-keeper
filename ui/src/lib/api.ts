@@ -218,6 +218,11 @@ export interface CertificateConfig {
   keyPath: string;
   certFileName: string;
   keyFileName: string;
+  subjectDistinguishedName: string;
+  issuerDistinguishedName: string;
+  serialNumber: string;
+  validFrom: string;
+  validUntil: string;
   fingerprintSha256: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -229,6 +234,12 @@ export interface CertificateUploadInput {
   enabled: boolean;
   cert: File;
   key: File;
+}
+
+export interface CertificateMetadataInput {
+  name: string;
+  hosts: string[];
+  enabled: boolean;
 }
 
 export class ApiError extends Error {
@@ -358,6 +369,16 @@ export const api = {
     form.set("key", input.key);
     return requestForm<CertificateConfig>("/api/certificates", form);
   },
+  updateCertificate: (id: string, input: CertificateMetadataInput) =>
+    request<CertificateConfig>(`/api/certificates/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  setCertificateEnabled: (id: string, enabled: boolean) =>
+    request<CertificateConfig>(`/api/certificates/${id}/enabled`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
   deleteCertificate: (id: string) =>
     request<void>(`/api/certificates/${id}`, { method: "DELETE" }),
   previewTestPlan: (input: TestPlanInput) =>

@@ -1,12 +1,12 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Badge from "../components/Badge";
 import { EmptyState } from "../components/TestPlanPanels";
 import { useToast } from "../context/ToastContext";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
-import { IconChevronLeft, IconShield, IconTrash } from "../icons";
+import { IconCheck, IconChevronLeft, IconPencil, IconShield, IconTrash, IconX } from "../icons";
 
 export default function CertificateDetailPage() {
   const { certificateId } = useParams({ strict: false }) as { certificateId: string };
@@ -14,6 +14,10 @@ export default function CertificateDetailPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
+  const [hosts, setHosts] = useState("");
+  const [enabled, setEnabled] = useState(true);
   const certificateQuery = useQuery({
     queryKey: ["certificate", certificateId],
     queryFn: () => api.getCertificate(certificateId),
@@ -27,6 +31,41 @@ export default function CertificateDetailPage() {
     },
     onError: notifyError,
   });
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      api.updateCertificate(certificateId, {
+        name,
+        hosts: splitHosts(hosts),
+        enabled,
+      }),
+    onSuccess: (certificate) => {
+      queryClient.invalidateQueries({ queryKey: ["certificates"] });
+      queryClient.setQueryData(["certificate", certificate.id], certificate);
+      push("success", "Certificate updated.");
+      setEditing(false);
+    },
+    onError: notifyError,
+  });
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.setCertificateEnabled(id, enabled),
+    onSuccess: (certificate) => {
+      queryClient.invalidateQueries({ queryKey: ["certificates"] });
+      queryClient.setQueryData(["certificate", certificate.id], certificate);
+      push("info", `${certificate.enabled ? "Enabled" : "Disabled"} ${certificate.name}.`);
+    },
+    onError: notifyError,
+  });
+
+  const loadedCertificate = certificateQuery.data;
+
+  useEffect(() => {
+    if (loadedCertificate && !editing) {
+      setName(loadedCertificate.name);
+      setHosts(loadedCertificate.hosts.join("\n"));
+      setEnabled(loadedCertificate.enabled);
+    }
+  }, [loadedCertificate, editing]);
 
   if (certificateQuery.data === undefined) {
     return certificateQuery.isError ? (
@@ -41,6 +80,11 @@ export default function CertificateDetailPage() {
   }
 
   const certificate = certificateQuery.data;
+
+  function submitEdit(event: FormEvent) {
+    event.preventDefault();
+    updateMutation.mutate();
+  }
 
   return (
     <section className="card">
@@ -57,9 +101,27 @@ export default function CertificateDetailPage() {
             {certificate.id}
           </p>
         </div>
-        <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
-          <IconTrash size={15} /> Delete
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>
+            <IconPencil size={15} /> Edit
+          </button>
+          <button
+            className={certificate.enabled ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
+            onClick={() =>
+              toggleMutation.mutate({
+                id: certificate.id,
+                enabled: !certificate.enabled,
+              })
+            }
+            disabled={toggleMutation.isPending}
+          >
+            {certificate.enabled ? <IconX size={15} /> : <IconCheck size={15} />}
+            {certificate.enabled ? "Disable" : "Enable"}
+          </button>
+          <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
+            <IconTrash size={15} /> Delete
+          </button>
+        </div>
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2">
@@ -71,7 +133,63 @@ export default function CertificateDetailPage() {
         ))}
       </div>
 
+      {editing ? (
+        <form
+          className="mb-5 flex flex-col gap-4 rounded-lg border border-line bg-surface-2 p-4"
+          onSubmit={submitEdit}
+        >
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[0.78rem] font-medium text-ink-muted">Name</span>
+            <input
+              className="input"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[0.78rem] font-medium text-ink-muted">Hosts</span>
+            <textarea
+              className="input min-h-[112px]"
+              value={hosts}
+              onChange={(event) => setHosts(event.target.value)}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[0.84rem] text-ink-muted">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+            />
+            Enabled
+          </label>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setEditing(false)}
+              disabled={updateMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={updateMutation.isPending}>
+              <IconCheck size={16} /> Save
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <DetailItem
+          label="Subject Distinguished Name"
+          value={valueOrEmpty(certificate.subjectDistinguishedName)}
+        />
+        <DetailItem
+          label="Issuer Distinguished Name"
+          value={valueOrEmpty(certificate.issuerDistinguishedName)}
+        />
+        <DetailItem label="Serial Number" value={valueOrEmpty(certificate.serialNumber)} />
+        <DetailItem label="Valid From" value={valueOrEmpty(certificate.validFrom)} />
+        <DetailItem label="Valid Until" value={valueOrEmpty(certificate.validUntil)} />
         <DetailItem label="Created" value={new Date(certificate.createdAtMs).toLocaleString()} />
         <DetailItem
           label="Updated"
@@ -118,6 +236,17 @@ export default function CertificateDetailPage() {
       ) : null}
     </section>
   );
+}
+
+function splitHosts(value: string): string[] {
+  return value
+    .split(/[\n,]+/)
+    .map((host) => host.trim())
+    .filter(Boolean);
+}
+
+function valueOrEmpty(value: string): string {
+  return value.trim() || "Not available";
 }
 
 function DetailItem({ label, value }: { label: string; value: string }) {

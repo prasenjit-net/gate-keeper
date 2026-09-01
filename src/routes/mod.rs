@@ -4,7 +4,7 @@ mod tests;
 pub mod ws;
 
 use axum::middleware::from_fn_with_state;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 
 use crate::access_log;
@@ -22,7 +22,13 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/certificates/{id}",
-            get(api::get_certificate).delete(api::delete_certificate),
+            get(api::get_certificate)
+                .put(api::update_certificate)
+                .delete(api::delete_certificate),
+        )
+        .route(
+            "/api/certificates/{id}/enabled",
+            patch(api::set_certificate_enabled),
         )
         .route("/api/test-plans/preview", post(api::preview_test_plan))
         .route("/api/test-plan-browser", get(api::browse_test_plans))

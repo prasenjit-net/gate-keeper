@@ -6,7 +6,7 @@ import { EmptyState } from "../components/TestPlanPanels";
 import { useToast } from "../context/ToastContext";
 import { api, type CertificateConfig } from "../lib/api";
 import { timeAgo } from "../lib/format";
-import { IconShield, IconTrash, IconUpload } from "../icons";
+import { IconCheck, IconShield, IconTrash, IconUpload, IconX } from "../icons";
 
 export default function CertificatesPage() {
   const { push, notifyError } = useToast();
@@ -21,6 +21,16 @@ export default function CertificatesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["certificates"] });
       push("info", "Certificate deleted.");
+    },
+    onError: notifyError,
+  });
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.setCertificateEnabled(id, enabled),
+    onSuccess: (certificate) => {
+      queryClient.invalidateQueries({ queryKey: ["certificates"] });
+      queryClient.invalidateQueries({ queryKey: ["certificate", certificate.id] });
+      push("info", `${certificate.enabled ? "Enabled" : "Disabled"} ${certificate.name}.`);
     },
     onError: notifyError,
   });
@@ -57,6 +67,13 @@ export default function CertificatesPage() {
                 certificate={certificate}
                 order={index + 1}
                 deleting={deleteMutation.variables === certificate.id}
+                toggling={toggleMutation.variables?.id === certificate.id}
+                onToggle={() =>
+                  toggleMutation.mutate({
+                    id: certificate.id,
+                    enabled: !certificate.enabled,
+                  })
+                }
                 onDelete={() => deleteMutation.mutate(certificate.id)}
               />
             ))}
@@ -73,11 +90,15 @@ function CertificateRow({
   certificate,
   order,
   deleting,
+  toggling,
+  onToggle,
   onDelete,
 }: {
   certificate: CertificateConfig;
   order: number;
   deleting: boolean;
+  toggling: boolean;
+  onToggle: () => void;
   onDelete: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -98,6 +119,14 @@ function CertificateRow({
             order {order} · updated {timeAgo(certificate.updatedAtMs)}
           </span>
         </Link>
+        <button
+          className={certificate.enabled ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
+          onClick={onToggle}
+          disabled={toggling || deleting}
+        >
+          {certificate.enabled ? <IconX size={15} /> : <IconCheck size={15} />}
+          {certificate.enabled ? "Disable" : "Enable"}
+        </button>
         <button
           className="icon-btn danger"
           onClick={() => setConfirmDelete(true)}

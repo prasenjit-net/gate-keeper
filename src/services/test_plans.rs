@@ -2099,6 +2099,10 @@ fn build_script_source(
     message: __message(error),
     stack: error && error.stack ? String(error.stack) : null
   }});
+  const __captureLog = (level, values) => {{
+    const message = values.map(__stringify).join(" ");
+    __gk.logs.push(level === "log" ? message : `[${{level}}] ${{message}}`);
+  }};
   const __scope = (bag) => ({{
     get(name) {{
       const value = bag[String(name)];
@@ -2150,7 +2154,7 @@ fn build_script_source(
       }}
     }},
     log(...values) {{
-      __gk.logs.push(values.map(__stringify).join(" "));
+      __captureLog("log", values);
     }},
     global: __globalScope,
     variables: {{
@@ -2175,9 +2179,16 @@ fn build_script_source(
     templateValue() {{ return null; }}
   }});
   const response = __responseBase || null;
+  const console = {{
+    log(...values) {{ __captureLog("log", values); }},
+    info(...values) {{ __captureLog("info", values); }},
+    warn(...values) {{ __captureLog("warn", values); }},
+    error(...values) {{ __captureLog("error", values); }},
+    debug(...values) {{ __captureLog("debug", values); }}
+  }};
   try {{
-    const __runner = new Function("client", "request", "response", __source);
-    __runner(client, request, response);
+    const __runner = new Function("client", "request", "response", "console", __source);
+    __runner(client, request, response, console);
   }} catch (error) {{
     __gk.errors.push(__scriptError(error));
     __gk.tests.push({{
@@ -2896,6 +2907,42 @@ GET http://{addr}/ok
             .unwrap()
             .contains("client.test"));
         assert!(execution_log(&report).contains("diagnostic"));
+    }
+
+    #[tokio::test]
+    async fn console_logs_are_captured_in_execution_logs() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/ok", get(|| async { StatusCode::OK }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let report = execute(input(&format!(
+            r#"
+### Console logs
+GET http://{addr}/ok
+
+> {{%
+  console.log("plain", request.url);
+  console.error("failed-ish", {{ status: response.status }});
+  client.test("status", () => {{
+    client.assert(response.status === 200);
+  }});
+%}}
+"#
+        )))
+        .await
+        .unwrap();
+
+        server.abort();
+
+        let logs = &report.results[0].logs;
+        assert_eq!(logs[0], format!("plain http://{addr}/ok"));
+        assert_eq!(logs[1], r#"[error] failed-ish {"status":200}"#);
+        let execution_log = execution_log(&report);
+        assert!(execution_log.contains(&format!("log: plain http://{addr}/ok")));
+        assert!(execution_log.contains(r#"log: [error] failed-ish {"status":200}"#));
     }
 
     #[tokio::test]

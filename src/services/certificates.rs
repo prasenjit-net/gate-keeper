@@ -5,6 +5,7 @@ use reqwest::Identity;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
+use x509_parser::pem::parse_x509_pem;
 
 use crate::error::{AppError, AppResult};
 
@@ -22,6 +23,16 @@ pub struct CertificateConfig {
     pub key_path: String,
     pub cert_file_name: String,
     pub key_file_name: String,
+    #[serde(default)]
+    pub subject_distinguished_name: String,
+    #[serde(default)]
+    pub issuer_distinguished_name: String,
+    #[serde(default)]
+    pub serial_number: String,
+    #[serde(default)]
+    pub valid_from: String,
+    #[serde(default)]
+    pub valid_until: String,
     pub fingerprint_sha256: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -44,6 +55,20 @@ pub struct CertificateUpload {
     pub key_file_name: Option<String>,
     pub cert_bytes: Vec<u8>,
     pub key_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateEnabledInput {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateMetadataInput {
+    pub name: String,
+    pub hosts: Vec<String>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +125,7 @@ impl CertificateStore {
         let hosts = clean_hosts(input.hosts)?;
         validate_key(&input.key_bytes)?;
         validate_identity(&input.cert_bytes, &input.key_bytes)?;
+        let metadata = certificate_metadata(&input.cert_bytes)?;
 
         let now = chrono::Utc::now().timestamp_millis();
         let id = self.next_id();
@@ -112,7 +138,12 @@ impl CertificateStore {
             key_path: format!("{id}/{KEY_FILE_NAME}"),
             cert_file_name: clean_file_name(input.cert_file_name.as_deref(), CERT_FILE_NAME),
             key_file_name: clean_file_name(input.key_file_name.as_deref(), KEY_FILE_NAME),
-            fingerprint_sha256: sha256_hex(&input.cert_bytes),
+            subject_distinguished_name: metadata.subject_distinguished_name,
+            issuer_distinguished_name: metadata.issuer_distinguished_name,
+            serial_number: metadata.serial_number,
+            valid_from: metadata.valid_from,
+            valid_until: metadata.valid_until,
+            fingerprint_sha256: metadata.fingerprint_sha256,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -150,6 +181,40 @@ impl CertificateStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(AppError::from(err)),
         }
+    }
+
+    pub async fn set_enabled(&self, id: &str, enabled: bool) -> AppResult<CertificateConfig> {
+        let mut certificates = self.certificates.write().await;
+        let certificate = certificates
+            .iter_mut()
+            .find(|certificate| certificate.id == id)
+            .ok_or_else(|| AppError::NotFound(format!("certificate {id} does not exist")))?;
+        certificate.enabled = enabled;
+        certificate.updated_at_ms = chrono::Utc::now().timestamp_millis();
+        let saved = certificate.clone();
+        persist_index(&self.data_dir, &certificates).await?;
+        Ok(saved)
+    }
+
+    pub async fn update_metadata(
+        &self,
+        id: &str,
+        input: CertificateMetadataInput,
+    ) -> AppResult<CertificateConfig> {
+        let name = clean_name(&input.name)?;
+        let hosts = clean_hosts(input.hosts)?;
+        let mut certificates = self.certificates.write().await;
+        let certificate = certificates
+            .iter_mut()
+            .find(|certificate| certificate.id == id)
+            .ok_or_else(|| AppError::NotFound(format!("certificate {id} does not exist")))?;
+        certificate.name = name;
+        certificate.hosts = hosts;
+        certificate.enabled = input.enabled;
+        certificate.updated_at_ms = chrono::Utc::now().timestamp_millis();
+        let saved = certificate.clone();
+        persist_index(&self.data_dir, &certificates).await?;
+        Ok(saved)
     }
 
     pub async fn match_host(&self, host: &str) -> Option<CertificateMatch> {
@@ -340,6 +405,32 @@ fn validate_identity(cert_bytes: &[u8], key_bytes: &[u8]) -> AppResult<()> {
     identity_from_parts(cert_bytes, key_bytes).map(|_| ())
 }
 
+#[derive(Debug)]
+struct CertificateMetadata {
+    subject_distinguished_name: String,
+    issuer_distinguished_name: String,
+    serial_number: String,
+    valid_from: String,
+    valid_until: String,
+    fingerprint_sha256: String,
+}
+
+fn certificate_metadata(cert_bytes: &[u8]) -> AppResult<CertificateMetadata> {
+    let (_, pem) = parse_x509_pem(cert_bytes)
+        .map_err(|err| AppError::BadRequest(format!("invalid certificate PEM: {err}")))?;
+    let certificate = pem
+        .parse_x509()
+        .map_err(|err| AppError::BadRequest(format!("invalid X.509 certificate: {err}")))?;
+    Ok(CertificateMetadata {
+        subject_distinguished_name: certificate.subject().to_string(),
+        issuer_distinguished_name: certificate.issuer().to_string(),
+        serial_number: certificate.raw_serial_as_string(),
+        valid_from: certificate.validity().not_before.to_string(),
+        valid_until: certificate.validity().not_after.to_string(),
+        fingerprint_sha256: sha256_hex(&pem.contents),
+    })
+}
+
 fn identity_from_parts(cert_bytes: &[u8], key_bytes: &[u8]) -> AppResult<Identity> {
     let mut pem = Vec::with_capacity(cert_bytes.len() + key_bytes.len() + 1);
     pem.extend_from_slice(cert_bytes);
@@ -413,6 +504,11 @@ mod tests {
             key_path: format!("{id}/client.key"),
             cert_file_name: "client.crt".into(),
             key_file_name: "client.key".into(),
+            subject_distinguished_name: "CN=test subject".into(),
+            issuer_distinguished_name: "CN=test issuer".into(),
+            serial_number: "01".into(),
+            valid_from: "2026-01-01 00:00:00 UTC".into(),
+            valid_until: "2027-01-01 00:00:00 UTC".into(),
             fingerprint_sha256: "fingerprint".into(),
             created_at_ms: 1,
             updated_at_ms: 1,
@@ -470,5 +566,61 @@ mod tests {
 
         let matched = store.match_host("api.example.com").await.unwrap();
         assert_eq!(matched.id, "first");
+    }
+
+    #[tokio::test]
+    async fn disabled_certificates_are_not_matched() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-cert-toggle-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = CertificateStore {
+            data_dir,
+            certificates: RwLock::new(vec![cert("disabled", &["api.example.com"])]),
+            counter: AtomicU64::new(1),
+        };
+        store
+            .set_enabled("disabled", false)
+            .await
+            .expect("toggle should succeed");
+
+        assert!(store.match_host("api.example.com").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn metadata_update_changes_name_hosts_and_enabled_state() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "gate-keeper-cert-metadata-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let store = CertificateStore {
+            data_dir,
+            certificates: RwLock::new(vec![cert("editable", &["api.example.com"])]),
+            counter: AtomicU64::new(1),
+        };
+
+        let updated = store
+            .update_metadata(
+                "editable",
+                CertificateMetadataInput {
+                    name: "Edited".into(),
+                    hosts: vec!["*.internal.example.com".into()],
+                    enabled: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.name, "Edited");
+        assert_eq!(updated.hosts, vec!["*.internal.example.com"]);
+        assert!(store.match_host("api.example.com").await.is_none());
+        assert_eq!(
+            store
+                .match_host("api.internal.example.com")
+                .await
+                .unwrap()
+                .id,
+            "editable"
+        );
     }
 }

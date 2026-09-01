@@ -7,7 +7,9 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
-use crate::services::certificates::{CertificateConfig, CertificateUpload};
+use crate::services::certificates::{
+    CertificateConfig, CertificateEnabledInput, CertificateMetadataInput, CertificateUpload,
+};
 use crate::services::events::Event;
 use crate::services::metrics::MetricsSnapshot;
 use crate::services::tasks::{NewTask, Task};
@@ -73,6 +75,40 @@ pub async fn delete_certificate(
     state.certificates.delete(&id).await?;
     state.activity("certificate", format!("Deleted certificate {id}"));
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn update_certificate(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<CertificateMetadataInput>,
+) -> AppResult<Json<CertificateConfig>> {
+    let certificate = state.certificates.update_metadata(&id, body).await?;
+    state.activity(
+        "certificate",
+        format!("Updated certificate \"{}\"", certificate.name),
+    );
+    Ok(Json(certificate))
+}
+
+pub async fn set_certificate_enabled(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<CertificateEnabledInput>,
+) -> AppResult<Json<CertificateConfig>> {
+    let certificate = state.certificates.set_enabled(&id, body.enabled).await?;
+    state.activity(
+        "certificate",
+        format!(
+            "{} certificate \"{}\"",
+            if certificate.enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            },
+            certificate.name
+        ),
+    );
+    Ok(Json(certificate))
 }
 
 async fn certificate_upload_from_multipart(
