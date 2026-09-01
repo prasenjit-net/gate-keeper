@@ -8,13 +8,21 @@ import {
   IconQueue,
   IconReport,
   IconServer,
+  IconShield,
   IconSliders,
   IconX,
 } from "../icons";
 import Logo from "./Logo";
 
 interface NavItem {
-  to: "/" | "/test-plans" | "/execution-queue" | "/executions" | "/components" | "/settings";
+  to:
+    | "/"
+    | "/test-plans"
+    | "/certificates"
+    | "/execution-queue"
+    | "/executions"
+    | "/components"
+    | "/settings";
   label: string;
   icon: ReactElement;
 }
@@ -22,6 +30,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: <IconDashboard size={20} /> },
   { to: "/test-plans", label: "Test Plans", icon: <IconServer size={20} /> },
+  { to: "/certificates", label: "Certificates", icon: <IconShield size={20} /> },
   { to: "/execution-queue", label: "Queue", icon: <IconQueue size={20} /> },
   { to: "/executions", label: "Executions", icon: <IconReport size={20} /> },
   { to: "/components", label: "Test Lab", icon: <IconLayers size={20} /> },

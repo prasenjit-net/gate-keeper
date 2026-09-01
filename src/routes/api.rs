@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use axum::extract::Multipart;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
+use crate::services::certificates::{CertificateConfig, CertificateUpload};
 use crate::services::events::Event;
 use crate::services::metrics::MetricsSnapshot;
 use crate::services::tasks::{NewTask, Task};
@@ -36,6 +38,123 @@ pub async fn metrics(State(state): State<SharedState>) -> AppResult<Json<Metrics
         .clone()
         .map(Json)
         .ok_or_else(|| AppError::Internal("metrics are not available yet".into()))
+}
+
+pub async fn list_certificates(State(state): State<SharedState>) -> Json<Vec<CertificateConfig>> {
+    Json(state.certificates.list().await)
+}
+
+pub async fn get_certificate(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<CertificateConfig>> {
+    state.certificates.get(&id).await.map(Json)
+}
+
+pub async fn create_certificate(
+    State(state): State<SharedState>,
+    multipart: Multipart,
+) -> AppResult<(StatusCode, Json<CertificateConfig>)> {
+    let certificate = state
+        .certificates
+        .create(certificate_upload_from_multipart(multipart).await?)
+        .await?;
+    state.activity(
+        "certificate",
+        format!("Uploaded certificate \"{}\"", certificate.name),
+    );
+    Ok((StatusCode::CREATED, Json(certificate)))
+}
+
+pub async fn delete_certificate(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    state.certificates.delete(&id).await?;
+    state.activity("certificate", format!("Deleted certificate {id}"));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn certificate_upload_from_multipart(
+    mut multipart: Multipart,
+) -> AppResult<CertificateUpload> {
+    let mut name = String::new();
+    let mut hosts = Vec::new();
+    let mut enabled = true;
+    let mut cert_file_name = None;
+    let mut key_file_name = None;
+    let mut cert_bytes = Vec::new();
+    let mut key_bytes = Vec::new();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| AppError::BadRequest(format!("failed to read certificate upload: {err}")))?
+    {
+        let field_name = field.name().unwrap_or_default().to_string();
+        match field_name.as_str() {
+            "name" => {
+                name = field.text().await.map_err(|err| {
+                    AppError::BadRequest(format!("failed to read certificate name: {err}"))
+                })?;
+            }
+            "hosts" => {
+                let raw = field.text().await.map_err(|err| {
+                    AppError::BadRequest(format!("failed to read certificate hosts: {err}"))
+                })?;
+                hosts.extend(
+                    raw.split([',', '\n', '\r'])
+                        .map(str::trim)
+                        .filter(|host| !host.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            "enabled" => {
+                let raw = field.text().await.map_err(|err| {
+                    AppError::BadRequest(format!("failed to read certificate enabled flag: {err}"))
+                })?;
+                enabled = matches!(raw.trim(), "true" | "1" | "yes" | "on");
+            }
+            "cert" => {
+                cert_file_name = field.file_name().map(str::to_string);
+                cert_bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|err| {
+                        AppError::BadRequest(format!("failed to read certificate file: {err}"))
+                    })?
+                    .to_vec();
+            }
+            "key" => {
+                key_file_name = field.file_name().map(str::to_string);
+                key_bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|err| {
+                        AppError::BadRequest(format!("failed to read private key file: {err}"))
+                    })?
+                    .to_vec();
+            }
+            _ => {}
+        }
+    }
+
+    if cert_bytes.is_empty() {
+        return Err(AppError::BadRequest("certificate file is required".into()));
+    }
+    if key_bytes.is_empty() {
+        return Err(AppError::BadRequest("private key file is required".into()));
+    }
+
+    Ok(CertificateUpload {
+        name,
+        hosts,
+        enabled,
+        cert_file_name,
+        key_file_name,
+        cert_bytes,
+        key_bytes,
+    })
 }
 
 pub async fn preview_test_plan(Json(body): Json<TestPlanInput>) -> AppResult<Json<TestPlan>> {
@@ -249,7 +368,11 @@ async fn run_queued_execution(state: SharedState, queue_id: String) {
         }
     }
 
-    match state.test_plans.run_queued_execution(&queue_id).await {
+    match state
+        .test_plans
+        .run_queued_execution(&queue_id, &state.certificates)
+        .await
+    {
         Ok(item) => {
             state.broadcast(Event::Queue {
                 data: Box::new(item.clone()),

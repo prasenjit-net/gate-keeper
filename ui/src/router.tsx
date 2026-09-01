@@ -4,6 +4,8 @@
 // component, so the sidebar/topbar shell wraps every page via <Outlet/>.
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import Layout from "./components/Layout";
+import CertificateDetailPage from "./pages/CertificateDetail";
+import CertificatesPage from "./pages/Certificates";
 import ComponentsPage from "./pages/Components";
 import DashboardPage from "./pages/Dashboard";
 import ExecutionDetailPage from "./pages/ExecutionDetail";
@@ -49,6 +51,18 @@ const testPlanEditRoute = createRoute({
   component: TestPlanDetailPage,
 });
 
+const certificatesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/certificates",
+  component: CertificatesPage,
+});
+
+const certificateDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/certificates/$certificateId",
+  component: CertificateDetailPage,
+});
+
 const executionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/executions",
@@ -77,6 +91,8 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   testPlansRoute,
   testPlanEditRoute,
+  certificatesRoute,
+  certificateDetailRoute,
   executionQueueRoute,
   executionsRoute,
   executionDetailRoute,

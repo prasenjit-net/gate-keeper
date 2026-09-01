@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
 use crate::error::{AppError, AppResult};
+use crate::services::certificates::{CertificateMatch, CertificateStore};
 
 const MAX_BODY_PREVIEW: usize = 8 * 1024;
 
@@ -117,6 +118,18 @@ pub struct ExecutionResult {
     pub assertions: Vec<AssertionResult>,
     #[serde(default)]
     pub diagnostics: Vec<ExecutionDiagnostic>,
+    #[serde(default)]
+    pub mtls: MtlsResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MtlsResult {
+    pub certificate_selected: bool,
+    pub certificate_id: Option<String>,
+    pub certificate_name: Option<String>,
+    pub matched_host_pattern: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -578,7 +591,11 @@ impl TestPlanStore {
         Ok(saved)
     }
 
-    pub async fn run_queued_execution(&self, id: &str) -> AppResult<ExecutionQueueItem> {
+    pub async fn run_queued_execution(
+        &self,
+        id: &str,
+        certificates: &CertificateStore,
+    ) -> AppResult<ExecutionQueueItem> {
         let item = self
             .queue
             .read()
@@ -588,7 +605,10 @@ impl TestPlanStore {
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("queued execution {id} does not exist")))?;
         let plan = self.get_plan(&item.plan_id).await?;
-        match self.execute_plan_with_id(&plan, item.id.clone()).await {
+        match self
+            .execute_plan_with_id(&plan, item.id.clone(), certificates)
+            .await
+        {
             Ok(execution) => {
                 let summary = execution.summary;
                 self.complete_queue_item(
@@ -618,6 +638,7 @@ impl TestPlanStore {
         &self,
         plan: &StoredPlan,
         execution_id: String,
+        certificates: &CertificateStore,
     ) -> AppResult<StoredExecution> {
         let script = plan.content.clone();
         let parsed = parse(TestPlanInput {
@@ -632,6 +653,7 @@ impl TestPlanStore {
             execution_id,
             script,
             Some(&script_base_dir),
+            Some(certificates),
         )
         .await?;
         let log = execution_log(&report);
@@ -1277,6 +1299,20 @@ fn execution_log(report: &ExecutionReport) -> String {
         if let Some(error) = &result.error {
             lines.push(format!("  error: {error}"));
         }
+        if let Some(message) = &result.mtls.message {
+            lines.push(format!("  {message}"));
+        }
+        if result.mtls.certificate_selected {
+            lines.push(format!(
+                "  mtls certificate: {} ({})",
+                result.mtls.certificate_name.as_deref().unwrap_or("unknown"),
+                result
+                    .mtls
+                    .matched_host_pattern
+                    .as_deref()
+                    .unwrap_or("unknown host pattern")
+            ));
+        }
         for diagnostic in &result.diagnostics {
             lines.push(format!(
                 "  diagnostic [{}:{}]: {}",
@@ -1370,7 +1406,7 @@ pub fn parse(input: TestPlanInput) -> AppResult<TestPlan> {
 pub async fn execute(input: TestPlanInput) -> AppResult<ExecutionReport> {
     let script = input.content.clone();
     let plan = parse(input)?;
-    run_plan("ad-hoc", &plan, new_id("exec"), script, None).await
+    run_plan("ad-hoc", &plan, new_id("exec"), script, None, None).await
 }
 
 async fn run_plan(
@@ -1379,25 +1415,22 @@ async fn run_plan(
     execution_id: String,
     script: String,
     script_base_dir: Option<&Path>,
+    certificates: Option<&CertificateStore>,
 ) -> AppResult<ExecutionReport> {
     let started = Instant::now();
     let started_at_ms = chrono::Utc::now().timestamp_millis();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|err| AppError::Internal(format!("failed to create HTTP client: {err}")))?;
+    let mut clients = HttpClientPool::new(certificates)?;
 
     let mut globals = BTreeMap::new();
     let mut results = Vec::with_capacity(plan.requests.len());
     for request in &plan.requests {
         results.push(
             execute_one(
-                &client,
                 request,
                 &plan.variables,
                 &mut globals,
                 script_base_dir,
+                &mut clients,
             )
             .await,
         );
@@ -1420,6 +1453,125 @@ async fn run_plan(
         failed: total - passed,
         results,
     })
+}
+
+struct HttpClientPool<'a> {
+    certificates: Option<&'a CertificateStore>,
+    default: reqwest::Client,
+    mtls: BTreeMap<String, reqwest::Client>,
+}
+
+impl<'a> HttpClientPool<'a> {
+    fn new(certificates: Option<&'a CertificateStore>) -> AppResult<Self> {
+        Ok(Self {
+            certificates,
+            default: build_http_client(None).map_err(AppError::Internal)?,
+            mtls: BTreeMap::new(),
+        })
+    }
+
+    async fn client_for(&mut self, url: &str) -> Result<(reqwest::Client, MtlsResult), String> {
+        let Ok(parsed) = Url::parse(url) else {
+            return Ok((
+                self.default.clone(),
+                MtlsResult {
+                    certificate_selected: false,
+                    message: Some("mTLS skipped because request URL could not be parsed".into()),
+                    ..MtlsResult::default()
+                },
+            ));
+        };
+
+        if parsed.scheme() != "https" {
+            return Ok((
+                self.default.clone(),
+                MtlsResult {
+                    certificate_selected: false,
+                    message: Some("mTLS skipped for non-HTTPS URL".into()),
+                    ..MtlsResult::default()
+                },
+            ));
+        }
+
+        let Some(host) = parsed.host_str() else {
+            return Ok((
+                self.default.clone(),
+                MtlsResult {
+                    certificate_selected: false,
+                    message: Some("mTLS skipped because HTTPS URL has no hostname".into()),
+                    ..MtlsResult::default()
+                },
+            ));
+        };
+
+        let Some(certificates) = self.certificates else {
+            return Ok((
+                self.default.clone(),
+                MtlsResult {
+                    certificate_selected: false,
+                    message: Some("mTLS skipped because no certificate store is configured".into()),
+                    ..MtlsResult::default()
+                },
+            ));
+        };
+
+        let Some(matched) = certificates.match_host(host).await else {
+            return Ok((
+                self.default.clone(),
+                MtlsResult {
+                    certificate_selected: false,
+                    message: Some(format!(
+                        "mTLS: no configured client certificate matched {host}"
+                    )),
+                    ..MtlsResult::default()
+                },
+            ));
+        };
+
+        if !self.mtls.contains_key(&matched.id) {
+            let identity = certificates.identity(&matched.id).await.map_err(|err| {
+                format!("mTLS: failed to load certificate {}: {err}", matched.name)
+            })?;
+            let client = build_http_client(Some(identity)).map_err(|err| {
+                format!("mTLS: failed to create client for {}: {err}", matched.name)
+            })?;
+            self.mtls.insert(matched.id.clone(), client);
+        }
+
+        let message = format!(
+            "mTLS: https host {host} matched {} using {}",
+            matched.matched_host_pattern, matched.name
+        );
+        Ok((
+            self.mtls
+                .get(&matched.id)
+                .expect("mTLS client must be inserted before use")
+                .clone(),
+            mtls_result(matched, message),
+        ))
+    }
+}
+
+fn build_http_client(identity: Option<reqwest::Identity>) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(10));
+    let builder = if let Some(identity) = identity {
+        builder.identity(identity)
+    } else {
+        builder
+    };
+    builder.build().map_err(|err| err.to_string())
+}
+
+fn mtls_result(matched: CertificateMatch, message: String) -> MtlsResult {
+    MtlsResult {
+        certificate_selected: true,
+        certificate_id: Some(matched.id),
+        certificate_name: Some(matched.name),
+        matched_host_pattern: Some(matched.matched_host_pattern),
+        message: Some(message),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1521,11 +1673,11 @@ fn script_preview(source: &str) -> String {
 }
 
 async fn execute_one(
-    client: &reqwest::Client,
     request: &TestPlanRequest,
     file_variables: &BTreeMap<String, String>,
     globals: &mut BTreeMap<String, Value>,
     script_base_dir: Option<&Path>,
+    clients: &mut HttpClientPool<'_>,
 ) -> ExecutionResult {
     let started = Instant::now();
     let mut assertion_results = Vec::new();
@@ -1536,6 +1688,7 @@ async fn execute_one(
     let mut error = None;
     let mut request_variables = BTreeMap::new();
     let mut diagnostics = Vec::new();
+    let mut mtls = MtlsResult::default();
 
     let mut executable_request = ExecutableRequest {
         method: request.method.clone(),
@@ -1615,6 +1768,7 @@ async fn execute_one(
             logs,
             assertions: assertion_results,
             diagnostics,
+            mtls,
         };
     }
 
@@ -1625,9 +1779,12 @@ async fn execute_one(
                 request,
                 started,
                 executable_request,
-                logs,
-                assertion_results,
-                diagnostics,
+                ExecutionArtifacts {
+                    logs,
+                    assertions: assertion_results,
+                    diagnostics,
+                    mtls,
+                },
                 format!("invalid method: {err}"),
             );
         }
@@ -1647,9 +1804,12 @@ async fn execute_one(
                     request,
                     started,
                     executable_request.clone(),
-                    logs,
-                    assertion_results,
-                    diagnostics,
+                    ExecutionArtifacts {
+                        logs,
+                        assertions: assertion_results,
+                        diagnostics,
+                        mtls,
+                    },
                     format!("invalid header name {}: {err}", header.name),
                 );
             }
@@ -1658,14 +1818,41 @@ async fn execute_one(
                     request,
                     started,
                     executable_request.clone(),
-                    logs,
-                    assertion_results,
-                    diagnostics,
+                    ExecutionArtifacts {
+                        logs,
+                        assertions: assertion_results,
+                        diagnostics,
+                        mtls,
+                    },
                     format!("invalid value for header {}: {err}", header.name),
                 );
             }
         }
     }
+
+    let client = match clients.client_for(&executable_request.url).await {
+        Ok((client, selection)) => {
+            mtls = selection;
+            if let Some(message) = &mtls.message {
+                tracing::debug!("{message}");
+            }
+            client
+        }
+        Err(err) => {
+            return ExecutionResult::failed_before_send(
+                request,
+                started,
+                executable_request,
+                ExecutionArtifacts {
+                    logs,
+                    assertions: assertion_results,
+                    diagnostics,
+                    mtls,
+                },
+                err,
+            );
+        }
+    };
 
     let send_result = client
         .request(method, &executable_request.url)
@@ -1775,6 +1962,7 @@ async fn execute_one(
         logs,
         assertions: assertion_results,
         diagnostics,
+        mtls,
     }
 }
 
@@ -1783,9 +1971,7 @@ impl ExecutionResult {
         request: &TestPlanRequest,
         started: Instant,
         executable_request: ExecutableRequest,
-        logs: Vec<String>,
-        assertions: Vec<AssertionResult>,
-        diagnostics: Vec<ExecutionDiagnostic>,
+        artifacts: ExecutionArtifacts,
         error: String,
     ) -> Self {
         Self {
@@ -1799,11 +1985,19 @@ impl ExecutionResult {
             response_bytes: 0,
             response_preview: String::new(),
             error: Some(error),
-            logs,
-            assertions,
-            diagnostics,
+            logs: artifacts.logs,
+            assertions: artifacts.assertions,
+            diagnostics: artifacts.diagnostics,
+            mtls: artifacts.mtls,
         }
     }
+}
+
+struct ExecutionArtifacts {
+    logs: Vec<String>,
+    assertions: Vec<AssertionResult>,
+    diagnostics: Vec<ExecutionDiagnostic>,
+    mtls: MtlsResult,
 }
 
 fn run_js_script(
@@ -2729,6 +2923,7 @@ client.log("external script ran");"#,
         .await
         .unwrap();
         let store = TestPlanStore::open(&data_dir).await;
+        let certificates = CertificateStore::open(&data_dir).await;
         let plan = store
             .create_plan(SavePlanInput {
                 name: "External script".into(),
@@ -2741,7 +2936,10 @@ client.log("external script ran");"#,
 
         let queued = store.enqueue_execution(&plan.id).await.unwrap();
         store.mark_queue_running(&queued.id).await.unwrap();
-        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+        let execution = store
+            .run_queued_execution(&queued.id, &certificates)
+            .await
+            .unwrap();
 
         server.abort();
 
@@ -2764,6 +2962,7 @@ client.log("external script ran");"#,
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         let store = TestPlanStore::open(&data_dir).await;
+        let certificates = CertificateStore::open(&data_dir).await;
         let script = format!(
             "### OK\nGET http://{addr}/ok\n> {{% client.assert(response.status === 200); %}}\n"
         );
@@ -2778,7 +2977,10 @@ client.log("external script ran");"#,
             .unwrap();
         let queued = store.enqueue_execution(&plan.id).await.unwrap();
         store.mark_queue_running(&queued.id).await.unwrap();
-        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+        let execution = store
+            .run_queued_execution(&queued.id, &certificates)
+            .await
+            .unwrap();
 
         server.abort();
 
@@ -2811,6 +3013,7 @@ client.log("external script ran");"#,
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         let store = TestPlanStore::open(&data_dir).await;
+        let certificates = CertificateStore::open(&data_dir).await;
         let plan = store
             .create_plan(SavePlanInput {
                 name: "Delete all".into(),
@@ -2822,7 +3025,10 @@ client.log("external script ran");"#,
             .unwrap();
         let queued = store.enqueue_execution(&plan.id).await.unwrap();
         store.mark_queue_running(&queued.id).await.unwrap();
-        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+        let execution = store
+            .run_queued_execution(&queued.id, &certificates)
+            .await
+            .unwrap();
 
         server.abort();
 
@@ -2905,6 +3111,7 @@ client.log("external script ran");"#,
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         let store = TestPlanStore::open(&data_dir).await;
+        let certificates = CertificateStore::open(&data_dir).await;
         let plan = store
             .create_plan(SavePlanInput {
                 name: "Manual edit".into(),
@@ -2932,7 +3139,10 @@ client.log("external script ran");"#,
 
         let queued = store.enqueue_execution(&plan.id).await.unwrap();
         store.mark_queue_running(&queued.id).await.unwrap();
-        let execution = store.run_queued_execution(&queued.id).await.unwrap();
+        let execution = store
+            .run_queued_execution(&queued.id, &certificates)
+            .await
+            .unwrap();
 
         server.abort();
 

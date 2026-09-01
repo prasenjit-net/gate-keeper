@@ -184,6 +184,15 @@ export interface ExecutionResult {
   logs: string[];
   assertions: AssertionResult[];
   diagnostics?: ExecutionDiagnostic[];
+  mtls?: MtlsResult;
+}
+
+export interface MtlsResult {
+  certificateSelected: boolean;
+  certificateId?: string | null;
+  certificateName?: string | null;
+  matchedHostPattern?: string | null;
+  message?: string | null;
 }
 
 export interface ExecutionDiagnostic {
@@ -198,6 +207,28 @@ export interface AssertionResult {
   name: string;
   passed: boolean;
   message: string;
+}
+
+export interface CertificateConfig {
+  id: string;
+  name: string;
+  hosts: string[];
+  enabled: boolean;
+  certPath: string;
+  keyPath: string;
+  certFileName: string;
+  keyFileName: string;
+  fingerprintSha256: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface CertificateUploadInput {
+  name: string;
+  hosts: string;
+  enabled: boolean;
+  cert: File;
+  key: File;
 }
 
 export class ApiError extends Error {
@@ -258,6 +289,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+async function requestForm<T>(path: string, form: FormData, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      method: init?.method ?? "POST",
+      body: form,
+    });
+  } catch {
+    throw new ApiError("NETWORK", 0, "Cannot reach the server");
+  }
+
+  if (!res.ok) {
+    let code = `HTTP_${res.status}`;
+    let message = res.statusText || "Request failed";
+    try {
+      const body = (await res.json()) as {
+        error?: { code?: string; message?: string };
+      };
+      if (body.error) {
+        code = body.error.code ?? code;
+        message = body.error.message ?? message;
+      }
+    } catch {
+      /* body was not JSON — keep the status text */
+    }
+    throw new ApiError(code, res.status, message);
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const raw = await res.text();
+  if (!raw.trim()) {
+    return undefined as T;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new ApiError("INVALID_RESPONSE", res.status, "Server returned invalid JSON");
+  }
+}
+
 function query(params: Record<string, string | undefined | null>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -273,6 +347,19 @@ export const api = {
   config: () => request<ServerConfig>("/api/config"),
   health: () => request<{ status: string; version: string }>("/api/health"),
   metrics: () => request<Metrics>("/api/metrics"),
+  listCertificates: () => request<CertificateConfig[]>("/api/certificates"),
+  getCertificate: (id: string) => request<CertificateConfig>(`/api/certificates/${id}`),
+  uploadCertificate: (input: CertificateUploadInput) => {
+    const form = new FormData();
+    form.set("name", input.name);
+    form.set("hosts", input.hosts);
+    form.set("enabled", String(input.enabled));
+    form.set("cert", input.cert);
+    form.set("key", input.key);
+    return requestForm<CertificateConfig>("/api/certificates", form);
+  },
+  deleteCertificate: (id: string) =>
+    request<void>(`/api/certificates/${id}`, { method: "DELETE" }),
   previewTestPlan: (input: TestPlanInput) =>
     request<TestPlan>("/api/test-plans/preview", {
       method: "POST",

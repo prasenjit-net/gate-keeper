@@ -50,6 +50,21 @@ export const IconSliders = icon(
   </>,
 );
 
+export const IconShield = icon(
+  <>
+    <path d="M12 3.5 19 6v5.5c0 4.1-2.6 7.2-7 9-4.4-1.8-7-4.9-7-9V6l7-2.5z" />
+    <path d="m9 12 2 2 4-4.5" />
+  </>,
+);
+
+export const IconUpload = icon(
+  <>
+    <path d="M12 16V4" />
+    <path d="m7 9 5-5 5 5" />
+    <path d="M5 20h14" />
+  </>,
+);
+
 export const IconSun = icon(
   <>
     <circle cx="12" cy="12" r="4" />

@@ -126,7 +126,13 @@ function ResultItem({ result }: { result: ExecutionResult }) {
           <div className="mt-2 flex flex-wrap gap-2">
             <Badge tone={result.ok ? "ok" : "err"}>{result.status ?? "ERR"}</Badge>
             <Badge>{result.responseBytes} bytes</Badge>
+            {result.mtls?.certificateSelected ? (
+              <Badge tone="info">mTLS {result.mtls.certificateName}</Badge>
+            ) : null}
           </div>
+          {result.mtls?.message ? (
+            <p className="mt-2 font-mono text-[0.72rem] text-ink-faint">{result.mtls.message}</p>
+          ) : null}
           {result.error ? <p className="mt-2 text-sm text-err">{result.error}</p> : null}
           {(result.diagnostics ?? []).length > 0 ? (
             <div className="mt-2 flex flex-col gap-2">

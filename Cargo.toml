@@ -5,7 +5,7 @@ edition = "2021"
 description = "HTTP REST API test case designer and executor with an Axum API and embedded React SPA"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,6 +21,7 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "rustls-tls"] }
 notify = "8.2.0"
 rquickjs = { version = "0.12.2", features = ["full"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

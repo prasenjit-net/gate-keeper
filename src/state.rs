@@ -7,6 +7,7 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::access_log::AccessLog;
 use crate::config::AppConfig;
+use crate::services::certificates::CertificateStore;
 use crate::services::events::Event;
 use crate::services::metrics::MetricsSnapshot;
 use crate::services::tasks::TaskStore;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub config: AppConfig,
     /// Fan-out channel feeding every connected WebSocket client.
     pub events: broadcast::Sender<Event>,
+    pub certificates: CertificateStore,
     pub test_plans: TestPlanStore,
     pub tasks: TaskStore,
     pub latest_metrics: RwLock<Option<MetricsSnapshot>>,
@@ -36,9 +38,12 @@ impl AppState {
     pub async fn new_with_data_dir(config: AppConfig, data_dir: impl Into<PathBuf>) -> Self {
         let (events, _) = broadcast::channel(64);
         let access_log = AccessLog::open(config.logging.access_log.as_deref()).await;
+        let data_dir = data_dir.into();
+        let certificates = CertificateStore::open(data_dir.clone()).await;
         let test_plans = TestPlanStore::open(data_dir).await;
         Self {
             events,
+            certificates,
             test_plans,
             tasks: TaskStore::with_examples(),
             latest_metrics: RwLock::new(None),
